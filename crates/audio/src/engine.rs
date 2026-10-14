@@ -12,10 +12,13 @@ pub enum PlayerCommand {
     ToggleMute,
     ToggleShuffle,
     CycleRepeatMode,
-    LoadTrack(Track),
+    LoadTrack {
+        track: Track,
+        audio_bytes: Vec<u8>,
+    },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PlayerEvent {
     StateChanged(PlaybackState),
     TrackEnded(Track),
@@ -92,7 +95,7 @@ impl AudioEngine {
                     RepeatMode::One => RepeatMode::Off,
                 };
             }
-            PlayerCommand::LoadTrack(track) => {
+            PlayerCommand::LoadTrack { track, .. } => {
                 self.state.duration_secs = track.duration_secs as f64;
                 self.state.position_secs = 0.0;
                 self.state.status = PlaybackStatus::Playing;
@@ -123,7 +126,10 @@ mod tests {
             format: AudioFormat::Wav,
         };
 
-        engine.handle_command(PlayerCommand::LoadTrack(track));
+        engine.handle_command(PlayerCommand::LoadTrack {
+            track,
+            audio_bytes: vec![],
+        });
         assert_eq!(engine.state().status, PlaybackStatus::Playing);
         assert_eq!(engine.state().duration_secs, 200.0);
 
