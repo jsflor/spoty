@@ -186,12 +186,14 @@ impl LibraryDatabase {
             playlists.push(pl);
         }
 
-        Ok(Library {
+        let mut lib = Library {
             tracks,
             albums: Vec::new(),
             artists: Vec::new(),
             playlists,
-        })
+        };
+        lib.aggregate_artists_and_albums();
+        Ok(lib)
     }
 
     /// Toggles the favorite status for a track, returning true if now favorited

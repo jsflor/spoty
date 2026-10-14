@@ -4,6 +4,8 @@ use spoty_core::{AlbumId, PlaylistId};
 pub enum Route {
     Home,
     Search,
+    AllSongs,
+    LikedSongs,
     Playlist(PlaylistId),
     #[allow(dead_code)]
     Album(AlbumId),
@@ -96,5 +98,12 @@ mod tests {
 
         nav.forward();
         assert_eq!(nav.current(), &Route::Search);
+
+        nav.push(Route::AllSongs);
+        assert_eq!(nav.current(), &Route::AllSongs);
+
+        nav.push(Route::LikedSongs);
+        assert_eq!(nav.current(), &Route::LikedSongs);
+        assert!(nav.can_go_back());
     }
 }

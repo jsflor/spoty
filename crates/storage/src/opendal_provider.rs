@@ -125,18 +125,13 @@ impl MusicProvider for OpenDalProvider {
                 if let Some(ext) = Path::new(&path).extension().and_then(|s| s.to_str()) {
                     let format = AudioFormat::from_extension(ext);
                     if format != AudioFormat::Unknown {
-                        let filename = Path::new(&path)
-                            .file_stem()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("Unknown Title");
-
                         // Read header or file bytes to extract real tags and picture
                         let extracted = if let Ok(header) =
                             self.operator.read_with(&path).range(0..128 * 1024).await
                         {
-                            extract_audio_metadata(&header.to_vec(), filename)
+                            extract_audio_metadata(&header.to_vec(), &path)
                         } else {
-                            extract_audio_metadata(&[], filename)
+                            extract_audio_metadata(&[], &path)
                         };
 
                         let cover_uri = extracted.cover_art.map(|img_bytes| {
@@ -163,12 +158,13 @@ impl MusicProvider for OpenDalProvider {
             }
         }
 
-        let library = Library {
+        let mut library = Library {
             tracks,
             albums: Vec::new(),
             artists: Vec::new(),
             playlists: Vec::new(),
         };
+        library.aggregate_artists_and_albums();
 
         *self.library_cache.write().await = Some(library.clone());
         *self.path_map.write().await = path_map;
