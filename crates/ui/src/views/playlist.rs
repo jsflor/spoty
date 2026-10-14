@@ -1,6 +1,11 @@
-use eframe::egui;
+use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 use spoty_core::{PlaylistId, Track};
 use spoty_storage::Library;
+use crate::theme::{
+    COLOR_ACCENT_GREEN, COLOR_BG_CARD, COLOR_BG_HIGHLIGHT, COLOR_DIVIDER, COLOR_TEXT_BASE,
+    COLOR_TEXT_SUBDUED,
+};
+use crate::widgets::play_circle_button;
 
 pub struct PlaylistView;
 
@@ -18,7 +23,7 @@ impl PlaylistView {
         let playlist = match library.playlists.iter().find(|p| &p.id == playlist_id) {
             Some(p) => p,
             None => {
-                ui.label("Playlist not found");
+                ui.label(egui::RichText::new("Playlist not found").color(COLOR_TEXT_SUBDUED));
                 return;
             }
         };
@@ -33,107 +38,301 @@ impl PlaylistView {
         let total_duration_secs: u32 = tracks.iter().map(|t| t.duration_secs).sum();
         let total_mins = total_duration_secs / 60;
 
-        // Spotify Hero Banner with vibrant backdrop
+        // 1. Spotify Full-Bleed Gradient Hero Banner
         egui::Frame::new()
-            .fill(egui::Color32::from_rgb(0x20, 0x48, 0x38)) // Forest green gradient tone
+            .fill(Color32::from_rgb(0x1a, 0x3d, 0x2e)) // Forest emerald gradient tone
+            .corner_radius(CornerRadius::same(8))
             .inner_margin(egui::Margin::same(24))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    // Large playlist artwork box
-                    let (rect, _response) = ui.allocate_exact_size(egui::vec2(160.0, 160.0), egui::Sense::hover());
-                    ui.painter().rect_filled(rect, egui::CornerRadius::same(6), egui::Color32::from_rgb(0x18, 0x18, 0x18));
-                    ui.painter().text(
-                        rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "🎵",
-                        egui::FontId::proportional(48.0),
-                        egui::Color32::WHITE,
-                    );
+                    // 160x160 Large Artwork Box
+                    let art_size = Vec2::splat(160.0);
+                    let (art_rect, _) = ui.allocate_exact_size(art_size, Sense::hover());
+                    if ui.is_rect_visible(art_rect) {
+                        let p = ui.painter();
+                        if let Some(uri) = &playlist.cover_uri {
+                            let img = egui::Image::new(uri)
+                                .fit_to_exact_size(art_size)
+                                .corner_radius(CornerRadius::same(4));
+                            img.paint_at(ui, art_rect);
+                        } else {
+                            p.rect_filled(art_rect, CornerRadius::same(4), COLOR_BG_CARD);
+                            p.circle_stroke(art_rect.center(), 40.0, Stroke::new(1.0_f32, Color32::from_black_alpha(40)));
+                            p.text(
+                                art_rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                "🎵",
+                                FontId::proportional(54.0),
+                                COLOR_TEXT_SUBDUED,
+                            );
+                        }
+                    }
 
                     ui.add_space(20.0);
 
                     // Hero text details
                     ui.vertical(|ui| {
-                        ui.label(egui::RichText::new("PUBLIC PLAYLIST").size(12.0).strong().color(egui::Color32::GRAY));
-                        ui.label(egui::RichText::new(&playlist.title).size(36.0).strong().color(egui::Color32::WHITE));
-                        if let Some(desc) = &playlist.description {
-                            ui.label(egui::RichText::new(desc).color(egui::Color32::LIGHT_GRAY));
-                        }
-                        ui.add_space(8.0);
                         ui.label(
-                            egui::RichText::new(format!(
-                                "Spoty • {} songs, approx {} min",
-                                tracks.len(),
-                                total_mins
-                            ))
-                            .small()
-                            .color(egui::Color32::GRAY),
+                            egui::RichText::new("PUBLIC PLAYLIST")
+                                .size(11.0)
+                                .strong()
+                                .color(COLOR_TEXT_BASE),
                         );
+                        ui.add_space(2.0);
+
+                        ui.label(
+                            egui::RichText::new(&playlist.title)
+                                .size(38.0)
+                                .strong()
+                                .color(COLOR_TEXT_BASE),
+                        );
+
+                        if let Some(desc) = &playlist.description {
+                            ui.add_space(4.0);
+                            ui.label(
+                                egui::RichText::new(desc)
+                                    .size(13.0)
+                                    .color(COLOR_TEXT_SUBDUED),
+                            );
+                        }
+
+                        ui.add_space(10.0);
+
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                egui::RichText::new("Spoty")
+                                    .size(12.0)
+                                    .strong()
+                                    .color(COLOR_TEXT_BASE),
+                            );
+                            ui.label(
+                                egui::RichText::new("•")
+                                    .size(12.0)
+                                    .color(COLOR_TEXT_SUBDUED),
+                            );
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{} songs, approx {} min",
+                                    tracks.len(),
+                                    total_mins
+                                ))
+                                .size(12.0)
+                                .color(COLOR_TEXT_SUBDUED),
+                            );
+                        });
                     });
                 });
             });
 
-        ui.add_space(16.0);
+        ui.add_space(18.0);
 
-        // Action bar: big green circular play button
+        // 2. Action Bar: 48px Circular Green Play Button + Options
         ui.horizontal(|ui| {
-            if ui
-                .button(
-                    egui::RichText::new(" ▶ Play All ")
-                        .size(16.0)
-                        .strong()
-                        .color(egui::Color32::BLACK),
-                )
+            if play_circle_button(ui, 48.0, false, Some(COLOR_ACCENT_GREEN))
+                .on_hover_text("Play Playlist")
                 .clicked()
             {
                 on_play_all(tracks.clone());
             }
 
-            ui.add_space(12.0);
-            ui.label(egui::RichText::new("•••").size(18.0).color(egui::Color32::GRAY));
+            ui.add_space(16.0);
+
+            let (dots_rect, dots_resp) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::click());
+            if ui.is_rect_visible(dots_rect) {
+                let p = ui.painter();
+                let col = if dots_resp.hovered() { COLOR_TEXT_BASE } else { COLOR_TEXT_SUBDUED };
+                p.text(dots_rect.center(), egui::Align2::CENTER_CENTER, "•••", FontId::proportional(18.0), col);
+            }
         });
 
-        ui.add_space(16.0);
+        ui.add_space(18.0);
 
-        // Track table
-        egui::Grid::new("playlist_tracks_grid")
-            .striped(true)
-            .min_col_width(80.0)
-            .show(ui, |ui| {
-                ui.label(egui::RichText::new("#").strong());
-                ui.label(egui::RichText::new("Title").strong());
-                ui.label(egui::RichText::new("Artist").strong());
-                ui.label(egui::RichText::new("Album").strong());
-                ui.label(egui::RichText::new("Duration").strong());
-                ui.label(egui::RichText::new("Fav").strong());
-                ui.label(egui::RichText::new("Action").strong());
-                ui.end_row();
+        // 3. Track List Header
+        let table_width = ui.available_width();
+        let (hdr_rect, _) = ui.allocate_exact_size(Vec2::new(table_width, 28.0), Sense::hover());
+        if ui.is_rect_visible(hdr_rect) {
+            let p = ui.painter();
+            // #
+            p.text(
+                Pos2::new(hdr_rect.left() + 16.0, hdr_rect.center().y),
+                egui::Align2::CENTER_CENTER,
+                "#",
+                FontId::proportional(12.0),
+                COLOR_TEXT_SUBDUED,
+            );
+            // Title
+            p.text(
+                Pos2::new(hdr_rect.left() + 48.0, hdr_rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                "Title",
+                FontId::proportional(12.0),
+                COLOR_TEXT_SUBDUED,
+            );
+            // Album
+            let album_x = hdr_rect.left() + (table_width * 0.52);
+            p.text(
+                Pos2::new(album_x, hdr_rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                "Album",
+                FontId::proportional(12.0),
+                COLOR_TEXT_SUBDUED,
+            );
+            // Clock icon for Duration
+            p.text(
+                Pos2::new(hdr_rect.right() - 36.0, hdr_rect.center().y),
+                egui::Align2::CENTER_CENTER,
+                "🕒",
+                FontId::proportional(11.0),
+                COLOR_TEXT_SUBDUED,
+            );
 
-                for (index, track) in tracks.iter().enumerate() {
-                    let is_current = current_track_id == Some(&track.id);
-                    let title_color = if is_current {
-                        egui::Color32::from_rgb(0x1e, 0xd7, 0x60)
-                    } else {
-                        egui::Color32::WHITE
-                    };
+            // Divider line
+            p.line_segment(
+                [
+                    Pos2::new(hdr_rect.left(), hdr_rect.bottom()),
+                    Pos2::new(hdr_rect.right(), hdr_rect.bottom()),
+                ],
+                Stroke::new(1.0_f32, COLOR_DIVIDER),
+            );
+        }
 
-                    ui.label(format!("{}", index + 1));
-                    ui.label(egui::RichText::new(&track.title).color(title_color));
-                    ui.label(&track.artist);
-                    ui.label(track.album.as_deref().unwrap_or("-"));
-                    ui.label(track.formatted_duration());
+        ui.add_space(6.0);
 
-                    let fav = is_track_fav(&track.id);
-                    let fav_icon = if fav { "💚" } else { "♡" };
-                    if ui.button(fav_icon).clicked() {
-                        on_toggle_fav(track.id.clone());
-                    }
+        // 4. Interactive Track List Rows
+        for (index, track) in tracks.iter().enumerate() {
+            let is_current = current_track_id == Some(&track.id);
+            let row_height = 54.0;
+            let (row_rect, row_resp) = ui.allocate_exact_size(
+                Vec2::new(table_width, row_height),
+                Sense::click(),
+            );
 
-                    if ui.button("▶").clicked() {
-                        on_play_track(track.clone());
-                    }
-                    ui.end_row();
+            if ui.is_rect_visible(row_rect) {
+                let p = ui.painter();
+                let is_hovered = row_resp.hovered();
+
+                // Hover row background highlight
+                if is_hovered {
+                    p.rect_filled(row_rect, CornerRadius::same(4), COLOR_BG_HIGHLIGHT);
                 }
-            });
+
+                // Index or Play Icon
+                let idx_pos = Pos2::new(row_rect.left() + 16.0, row_rect.center().y);
+                if is_hovered {
+                    p.text(
+                        idx_pos,
+                        egui::Align2::CENTER_CENTER,
+                        "▶",
+                        FontId::proportional(12.0),
+                        COLOR_TEXT_BASE,
+                    );
+                } else if is_current {
+                    p.text(
+                        idx_pos,
+                        egui::Align2::CENTER_CENTER,
+                        "♫",
+                        FontId::proportional(13.0),
+                        COLOR_ACCENT_GREEN,
+                    );
+                } else {
+                    p.text(
+                        idx_pos,
+                        egui::Align2::CENTER_CENTER,
+                        format!("{}", index + 1),
+                        FontId::proportional(13.0),
+                        COLOR_TEXT_SUBDUED,
+                    );
+                }
+
+                // Artwork thumbnail (40x40)
+                let thumb_rect = Rect::from_min_size(
+                    Pos2::new(row_rect.left() + 38.0, row_rect.min.y + 7.0),
+                    Vec2::splat(40.0),
+                );
+                if let Some(uri) = &track.cover_uri {
+                    let img = egui::Image::new(uri)
+                        .fit_to_exact_size(Vec2::splat(40.0))
+                        .corner_radius(CornerRadius::same(3));
+                    img.paint_at(ui, thumb_rect);
+                } else {
+                    p.rect_filled(thumb_rect, CornerRadius::same(3), COLOR_BG_CARD);
+                    p.text(thumb_rect.center(), egui::Align2::CENTER_CENTER, "🎵", FontId::proportional(16.0), COLOR_TEXT_SUBDUED);
+                }
+
+                // Title & Artist
+                let title_col = if is_current { COLOR_ACCENT_GREEN } else { COLOR_TEXT_BASE };
+                p.text(
+                    Pos2::new(row_rect.left() + 86.0, row_rect.min.y + 16.0),
+                    egui::Align2::LEFT_TOP,
+                    &track.title,
+                    FontId::proportional(14.0),
+                    title_col,
+                );
+                p.text(
+                    Pos2::new(row_rect.left() + 86.0, row_rect.min.y + 32.0),
+                    egui::Align2::LEFT_TOP,
+                    &track.artist,
+                    FontId::proportional(12.0),
+                    COLOR_TEXT_SUBDUED,
+                );
+
+                // Album
+                let album_x = row_rect.left() + (table_width * 0.52);
+                let album_name = track.album.as_deref().unwrap_or("-");
+                p.text(
+                    Pos2::new(album_x, row_rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    album_name,
+                    FontId::proportional(13.0),
+                    COLOR_TEXT_SUBDUED,
+                );
+
+                // Duration
+                p.text(
+                    Pos2::new(row_rect.right() - 36.0, row_rect.center().y),
+                    egui::Align2::CENTER_CENTER,
+                    track.formatted_duration(),
+                    FontId::proportional(12.0),
+                    COLOR_TEXT_SUBDUED,
+                );
+            }
+
+            if row_resp.clicked() {
+                on_play_track(track.clone());
+            }
+
+            // Interactive Heart Button on the right
+            let fav = is_track_fav(&track.id);
+            let heart_rect = Rect::from_center_size(
+                Pos2::new(row_rect.right() - 74.0, row_rect.center().y),
+                Vec2::splat(24.0),
+            );
+            let heart_resp = ui.allocate_rect(heart_rect, Sense::click());
+            if ui.is_rect_visible(heart_rect) {
+                let p = ui.painter();
+                let heart_col = if fav {
+                    COLOR_ACCENT_GREEN
+                } else if heart_resp.hovered() {
+                    COLOR_TEXT_BASE
+                } else {
+                    Color32::TRANSPARENT
+                };
+                if fav || heart_resp.hovered() || row_resp.hovered() {
+                    let heart_text = if fav { "♥" } else { "♡" };
+                    p.text(
+                        heart_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        heart_text,
+                        FontId::proportional(16.0),
+                        heart_col,
+                    );
+                }
+            }
+            if heart_resp.clicked() {
+                on_toggle_fav(track.id.clone());
+            }
+
+            ui.add_space(2.0);
+        }
     }
 }
