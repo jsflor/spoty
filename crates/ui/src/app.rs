@@ -10,6 +10,7 @@ use tokio::io::AsyncReadExt;
 use crate::config::{ProviderType, SpotyConfig};
 use crate::navigation::{NavigationHistory, Route};
 use crate::views::{HomeView, PlaylistView, SearchView, SettingsView};
+use crate::widgets::VisualizerWidget;
 
 pub struct SpotyApp {
     library: Library,
@@ -21,6 +22,7 @@ pub struct SpotyApp {
     queue: Queue,
     config: SpotyConfig,
     search_query: String,
+    visualizer_levels: [f32; 16],
 }
 
 impl SpotyApp {
@@ -28,7 +30,6 @@ impl SpotyApp {
         let tokio_rt = Arc::new(tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime"));
         let config = SpotyConfig::load();
 
-        // Initialize provider based on saved config
         let provider: Arc<dyn MusicProvider> = match config.active_provider {
             ProviderType::LocalFs if !config.local_path.is_empty() => {
                 match OpenDalProvider::new_fs(&config.local_path) {
@@ -65,6 +66,7 @@ impl SpotyApp {
             queue,
             config,
             search_query: String::new(),
+            visualizer_levels: [0.0; 16],
         }
     }
 
@@ -169,6 +171,10 @@ impl eframe::App for SpotyApp {
                     self.controller.update_cached_state(state);
                     ctx.request_repaint();
                 }
+                PlayerEvent::VisualizerLevels(levels) => {
+                    self.visualizer_levels = levels;
+                    ctx.request_repaint();
+                }
                 PlayerEvent::TrackEnded(_) => {
                     self.play_next();
                 }
@@ -179,6 +185,7 @@ impl eframe::App for SpotyApp {
         }
 
         let state = self.controller.state();
+        let is_playing = state.status == PlaybackStatus::Playing;
 
         // Top Panel: Navigation & Search
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
@@ -210,17 +217,34 @@ impl eframe::App for SpotyApp {
         // Bottom Panel: Persistent Player
         egui::TopBottomPanel::bottom("player_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.allocate_ui(egui::vec2(220.0, 40.0), |ui| {
-                    if let Some(track) = &state.current_track {
-                        ui.vertical(|ui| {
-                            ui.label(egui::RichText::new(&track.title).strong().color(egui::Color32::WHITE));
-                            ui.label(egui::RichText::new(&track.artist).small().color(egui::Color32::GRAY));
-                        });
-                    } else {
-                        ui.label(egui::RichText::new("No track playing").weak());
-                    }
+                // Left: Track cover art & details
+                ui.allocate_ui(egui::vec2(260.0, 48.0), |ui| {
+                    ui.horizontal(|ui| {
+                        if let Some(track) = &state.current_track {
+                            if let Some(uri) = &track.cover_uri {
+                                ui.add(
+                                    egui::Image::new(uri)
+                                        .fit_to_exact_size(egui::vec2(44.0, 44.0))
+                                        .corner_radius(egui::CornerRadius::same(4)),
+                                );
+                            } else {
+                                let (rect, _) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), egui::Sense::hover());
+                                ui.painter().rect_filled(rect, egui::CornerRadius::same(4), egui::Color32::from_rgb(0x24, 0x24, 0x24));
+                                ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "🎵", egui::FontId::proportional(20.0), egui::Color32::WHITE);
+                            }
+
+                            ui.add_space(8.0);
+                            ui.vertical(|ui| {
+                                ui.label(egui::RichText::new(&track.title).strong().color(egui::Color32::WHITE));
+                                ui.label(egui::RichText::new(&track.artist).small().color(egui::Color32::GRAY));
+                            });
+                        } else {
+                            ui.label(egui::RichText::new("No track playing").weak());
+                        }
+                    });
                 });
 
+                // Center: Playback controls and timeline
                 ui.vertical_centered(|ui| {
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
@@ -287,6 +311,7 @@ impl eframe::App for SpotyApp {
                     });
                 });
 
+                // Right: Volume control & Audio Spectrum Visualizer
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let mut volume = state.volume;
                     if ui.add(egui::Slider::new(&mut volume, 0.0..=1.0).show_value(false)).changed() {
@@ -297,6 +322,11 @@ impl eframe::App for SpotyApp {
                     if ui.button(mute_icon).clicked() {
                         self.controller.toggle_mute();
                     }
+
+                    ui.add_space(16.0);
+
+                    // Real-time audio spectrum visualizer
+                    VisualizerWidget::new(&self.visualizer_levels, is_playing).show(ui);
                 });
             });
         });

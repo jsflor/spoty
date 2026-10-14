@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use base64::Engine;
 use futures::StreamExt;
 use opendal::services::{Fs, S3};
 use opendal::{EntryMode, Operator};
@@ -8,6 +9,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+use crate::metadata::extract_audio_metadata;
 use crate::provider::{AudioStream, Library, MusicProvider};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -29,7 +32,6 @@ pub struct OpenDalProvider {
 }
 
 impl OpenDalProvider {
-    /// Create a new OpenDAL provider backed by a local filesystem directory
     pub fn new_fs(root_dir: impl AsRef<Path>) -> anyhow::Result<Self> {
         let root_str = root_dir.as_ref().to_string_lossy().to_string();
         let builder = Fs::default().root(&root_str);
@@ -44,7 +46,6 @@ impl OpenDalProvider {
         })
     }
 
-    /// Create a new OpenDAL provider backed by AWS S3, Cloudflare R2, or MinIO
     pub fn new_s3(config: S3Config) -> anyhow::Result<Self> {
         let mut builder = S3::default().bucket(&config.bucket);
         if let Some(endpoint) = &config.endpoint {
@@ -70,7 +71,6 @@ impl OpenDalProvider {
         Ok(Self::new(id, display_name, operator))
     }
 
-    /// Create from any configured OpenDAL operator
     pub fn new(id: impl Into<String>, display_name: impl Into<String>, operator: Operator) -> Self {
         Self {
             id: id.into(),
@@ -130,18 +130,28 @@ impl MusicProvider for OpenDalProvider {
                             .and_then(|s| s.to_str())
                             .unwrap_or("Unknown Title");
 
-                        let (artist, title) = parse_filename_metadata(filename);
-                        let track_id = TrackId::new(format!("{}:{}", self.id, path));
+                        // Read header or file bytes to extract real tags and picture
+                        let extracted = if let Ok(header) = self.operator.read_with(&path).range(0..128 * 1024).await {
+                            extract_audio_metadata(&header.to_vec(), filename)
+                        } else {
+                            extract_audio_metadata(&[], filename)
+                        };
 
+                        let cover_uri = extracted.cover_art.map(|img_bytes| {
+                            let encoded = base64::engine::general_purpose::STANDARD.encode(&img_bytes);
+                            format!("data:image/jpeg;base64,{}", encoded)
+                        });
+
+                        let track_id = TrackId::new(format!("{}:{}", self.id, path));
                         path_map.insert(track_id.clone(), path.clone());
 
                         tracks.push(Track {
                             id: track_id,
-                            title,
-                            artist,
-                            album: None,
-                            duration_secs: 180,
-                            cover_uri: None,
+                            title: extracted.title,
+                            artist: extracted.artist,
+                            album: extracted.album,
+                            duration_secs: extracted.duration_secs,
+                            cover_uri,
                             source_uri: format!("opendal://{}/{}", self.id, path),
                             format,
                         });
@@ -182,17 +192,6 @@ impl MusicProvider for OpenDalProvider {
         let bytes = self.operator.read(path).await?.to_vec();
         let cursor = std::io::Cursor::new(bytes);
         Ok(Box::pin(cursor))
-    }
-}
-
-/// Simple heuristic to extract "Artist - Title" from filenames
-fn parse_filename_metadata(stem: &str) -> (String, String) {
-    if let Some((artist, title)) = stem.split_once(" - ") {
-        (artist.trim().to_string(), title.trim().to_string())
-    } else if let Some((artist, title)) = stem.split_once('_') {
-        (artist.trim().to_string(), title.trim().to_string())
-    } else {
-        ("Unknown Artist".to_string(), stem.to_string())
     }
 }
 

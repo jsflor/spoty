@@ -21,6 +21,7 @@ pub enum PlayerCommand {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlayerEvent {
     StateChanged(PlaybackState),
+    VisualizerLevels([f32; 16]),
     TrackEnded(Track),
     Error(String),
 }

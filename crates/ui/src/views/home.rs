@@ -30,7 +30,16 @@ impl HomeView {
                     ui.group(|ui| {
                         ui.set_width(240.0);
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("📁").size(24.0));
+                            if let Some(uri) = &playlist.cover_uri {
+                                ui.add(
+                                    egui::Image::new(uri)
+                                        .fit_to_exact_size(egui::vec2(36.0, 36.0))
+                                        .corner_radius(egui::CornerRadius::same(4)),
+                                );
+                            } else {
+                                ui.label(egui::RichText::new("📁").size(24.0));
+                            }
+
                             ui.vertical(|ui| {
                                 if ui.link(egui::RichText::new(&playlist.title).strong().color(egui::Color32::WHITE)).clicked() {
                                     on_navigate(Route::Playlist(playlist.id.clone()));
@@ -64,15 +73,30 @@ impl HomeView {
 
                 ui.group(|ui| {
                     ui.set_width(170.0);
-                    ui.set_height(200.0);
+                    ui.set_height(210.0);
                     ui.vertical(|ui| {
-                        // Card placeholder art
-                        let (rect, _response) = ui.allocate_exact_size(egui::vec2(150.0, 120.0), egui::Sense::hover());
-                        ui.painter().rect_filled(
-                            rect,
-                            egui::CornerRadius::same(6),
-                            egui::Color32::from_rgb(0x28, 0x28, 0x28),
-                        );
+                        // Render cover image or fallback icon
+                        if let Some(uri) = &track.cover_uri {
+                            ui.add(
+                                egui::Image::new(uri)
+                                    .fit_to_exact_size(egui::vec2(150.0, 120.0))
+                                    .corner_radius(egui::CornerRadius::same(6)),
+                            );
+                        } else {
+                            let (rect, _response) = ui.allocate_exact_size(egui::vec2(150.0, 120.0), egui::Sense::hover());
+                            ui.painter().rect_filled(
+                                rect,
+                                egui::CornerRadius::same(6),
+                                egui::Color32::from_rgb(0x28, 0x28, 0x28),
+                            );
+                            ui.painter().text(
+                                rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                "🎵",
+                                egui::FontId::proportional(32.0),
+                                egui::Color32::WHITE,
+                            );
+                        }
 
                         let title_color = if is_current {
                             egui::Color32::from_rgb(0x1e, 0xd7, 0x60)
@@ -96,6 +120,5 @@ impl HomeView {
 }
 
 fn get_time_greeting() -> &'static str {
-    // Simple greeting fallback
     "Good evening"
 }
