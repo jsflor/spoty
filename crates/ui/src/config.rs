@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use spoty_storage::{S3Config, SubsonicConfig};
+use spoty_storage::{S3Config, SpotifyConfig, SubsonicConfig};
 use std::fs;
 use std::path::PathBuf;
 
@@ -11,6 +11,7 @@ pub enum ProviderType {
     LocalFs,
     S3,
     Subsonic,
+    Spotify,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +20,7 @@ pub struct SpotyConfig {
     pub local_path: String,
     pub s3: S3Config,
     pub subsonic: SubsonicConfig,
+    pub spotify: SpotifyConfig,
 }
 
 impl Default for SpotyConfig {
@@ -35,6 +37,7 @@ impl Default for SpotyConfig {
                 root: Some("music/".into()),
             },
             subsonic: SubsonicConfig::new("http://raspberrypi:4533", "admin", "secret"),
+            spotify: SpotifyConfig::default(),
         }
     }
 }
@@ -82,5 +85,6 @@ mod tests {
         let deserialized: SpotyConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(cfg.active_provider, deserialized.active_provider);
         assert_eq!(cfg.s3.bucket, deserialized.s3.bucket);
+        assert_eq!(cfg.spotify.device_name, deserialized.spotify.device_name);
     }
 }

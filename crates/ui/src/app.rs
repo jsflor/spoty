@@ -1,7 +1,7 @@
 use eframe::egui;
 use spoty_audio::{PlayerController, PlayerEvent};
 use spoty_core::{PlaybackStatus, Queue, Track};
-use spoty_storage::{DemoProvider, Library, MusicProvider, OpenDalProvider, S3Config, SubsonicConfig, SubsonicProvider};
+use spoty_storage::{DemoProvider, Library, MusicProvider, OpenDalProvider, S3Config, SpotifyConfig, SpotifyProvider, SubsonicConfig, SubsonicProvider};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::Duration;
@@ -45,6 +45,9 @@ impl SpotyApp {
             }
             ProviderType::Subsonic if !config.subsonic.server_url.is_empty() => {
                 Arc::new(SubsonicProvider::new(config.subsonic.clone()))
+            }
+            ProviderType::Spotify if !config.spotify.client_id.is_empty() => {
+                Arc::new(SpotifyProvider::new(config.spotify.clone()))
             }
             _ => Arc::new(DemoProvider::new()),
         };
@@ -156,6 +159,12 @@ impl SpotyApp {
         let p = SubsonicProvider::new(config.clone());
         self.config.subsonic = config;
         self.switch_provider(Arc::new(p), ProviderType::Subsonic);
+    }
+
+    fn switch_to_spotify(&mut self, config: SpotifyConfig) {
+        let p = SpotifyProvider::new(config.clone());
+        self.config.spotify = config;
+        self.switch_provider(Arc::new(p), ProviderType::Spotify);
     }
 
     fn switch_to_demo(&mut self) {
@@ -446,6 +455,7 @@ impl eframe::App for SpotyApp {
                     let mut switch_fs = None;
                     let mut switch_s3 = None;
                     let mut switch_subsonic = None;
+                    let mut switch_spotify = None;
 
                     SettingsView::show(
                         ui,
@@ -455,6 +465,7 @@ impl eframe::App for SpotyApp {
                         &mut |path| switch_fs = Some(path),
                         &mut |s3| switch_s3 = Some(s3),
                         &mut |subsonic| switch_subsonic = Some(subsonic),
+                        &mut |spotify| switch_spotify = Some(spotify),
                     );
 
                     if switch_demo {
@@ -468,6 +479,9 @@ impl eframe::App for SpotyApp {
                     }
                     if let Some(subsonic) = switch_subsonic {
                         self.switch_to_subsonic(subsonic);
+                    }
+                    if let Some(spotify) = switch_spotify {
+                        self.switch_to_spotify(spotify);
                     }
                 }
             }
