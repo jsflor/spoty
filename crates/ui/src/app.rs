@@ -1,11 +1,14 @@
 use eframe::egui;
 use spoty_audio::{PlayerController, PlayerEvent};
-use spoty_core::{PlaybackStatus, Track};
-use spoty_storage::{DemoProvider, Library, MusicProvider};
+use spoty_core::{PlaybackStatus, Queue, Track};
+use spoty_storage::{DemoProvider, Library, MusicProvider, OpenDalProvider};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
+
+use crate::navigation::{NavigationHistory, Route};
+use crate::views::{HomeView, PlaylistView, SearchView, SettingsView};
 
 pub struct SpotyApp {
     library: Library,
@@ -13,7 +16,10 @@ pub struct SpotyApp {
     controller: PlayerController,
     event_rx: Receiver<PlayerEvent>,
     tokio_rt: Arc<tokio::runtime::Runtime>,
+    nav: NavigationHistory,
+    queue: Queue,
     search_query: String,
+    local_dir_input: String,
 }
 
 impl SpotyApp {
@@ -27,17 +33,26 @@ impl SpotyApp {
 
         let (controller, event_rx) = PlayerController::new();
 
+        let queue = Queue::with_tracks(library.tracks.clone(), None);
+
         Self {
             library,
             provider,
             controller,
             event_rx,
             tokio_rt,
+            nav: NavigationHistory::new(),
+            queue,
             search_query: String::new(),
+            local_dir_input: String::new(),
         }
     }
 
-    fn play_track(&self, track: Track) {
+    fn play_track(&mut self, track: Track) {
+        if let Some(pos) = self.queue.tracks().iter().position(|t| t.id == track.id) {
+            self.queue.jump_to(pos);
+        }
+
         let provider = self.provider.clone();
         let controller = self.controller.clone();
         let track_clone = track.clone();
@@ -56,6 +71,57 @@ impl SpotyApp {
             }
         });
     }
+
+    fn play_next(&mut self) {
+        let repeat = self.controller.state().repeat_mode;
+        if let Some(next_track) = self.queue.next(repeat).cloned() {
+            self.play_track(next_track);
+        }
+    }
+
+    fn play_prev(&mut self) {
+        let state = self.controller.state();
+        // If track played for more than 3 seconds, replay from beginning
+        if state.position_secs > 3.0 {
+            self.controller.seek(Duration::ZERO);
+        } else if let Some(prev_track) = self.queue.prev().cloned() {
+            self.play_track(prev_track);
+        }
+    }
+
+    fn play_all_tracks(&mut self, tracks: Vec<Track>) {
+        if let Some(first) = tracks.first().cloned() {
+            self.queue.set_tracks(tracks, Some(0));
+            self.play_track(first);
+        }
+    }
+
+    fn switch_to_local_fs(&mut self, path: String) {
+        match OpenDalProvider::new_fs(&path) {
+            Ok(new_provider) => {
+                let provider_arc: Arc<dyn MusicProvider> = Arc::new(new_provider);
+                if let Ok(new_lib) = self.tokio_rt.block_on(provider_arc.fetch_library()) {
+                    self.provider = provider_arc;
+                    self.library = new_lib.clone();
+                    self.queue.set_tracks(new_lib.tracks, None);
+                    self.nav.push(Route::Home);
+                }
+            }
+            Err(e) => {
+                tracing::error!("Failed to mount local directory: {}", e);
+            }
+        }
+    }
+
+    fn switch_to_demo(&mut self) {
+        let provider_arc: Arc<dyn MusicProvider> = Arc::new(DemoProvider::new());
+        if let Ok(new_lib) = self.tokio_rt.block_on(provider_arc.fetch_library()) {
+            self.provider = provider_arc;
+            self.library = new_lib.clone();
+            self.queue.set_tracks(new_lib.tracks, None);
+            self.nav.push(Route::Home);
+        }
+    }
 }
 
 impl eframe::App for SpotyApp {
@@ -67,8 +133,8 @@ impl eframe::App for SpotyApp {
                     self.controller.update_cached_state(state);
                     ctx.request_repaint();
                 }
-                PlayerEvent::TrackEnded(track) => {
-                    tracing::info!("Track finished: {}", track.title);
+                PlayerEvent::TrackEnded(_) => {
+                    self.play_next();
                 }
                 PlayerEvent::Error(err) => {
                     tracing::error!("Audio error: {}", err);
@@ -81,15 +147,37 @@ impl eframe::App for SpotyApp {
         // Top Panel: Navigation & Search
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("◀").size(16.0));
-                ui.label(egui::RichText::new("▶").size(16.0));
+                // Back button
+                let back_enabled = self.nav.can_go_back();
+                if ui
+                    .add_enabled(back_enabled, egui::Button::new("◀"))
+                    .on_hover_text("Go back")
+                    .clicked()
+                {
+                    self.nav.back();
+                }
+
+                // Forward button
+                let fwd_enabled = self.nav.can_go_forward();
+                if ui
+                    .add_enabled(fwd_enabled, egui::Button::new("▶"))
+                    .on_hover_text("Go forward")
+                    .clicked()
+                {
+                    self.nav.forward();
+                }
+
                 ui.add_space(16.0);
 
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.search_query)
-                        .hint_text("Search by title, artist, or album...")
-                        .desired_width(320.0),
-                );
+                let search_box = egui::TextEdit::singleline(&mut self.search_query)
+                    .hint_text("What do you want to play?")
+                    .desired_width(320.0);
+
+                if ui.add(search_box).changed() {
+                    if *self.nav.current() != Route::Search {
+                        self.nav.push(Route::Search);
+                    }
+                }
             });
         });
 
@@ -113,12 +201,25 @@ impl eframe::App for SpotyApp {
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
 
-                        if ui.button("🔀").on_hover_text("Shuffle").clicked() {
-                            self.controller.toggle_shuffle();
+                        let shuffle_btn_color = if self.queue.is_shuffle() {
+                            egui::Color32::from_rgb(0x1e, 0xd7, 0x60)
+                        } else {
+                            egui::Color32::GRAY
+                        };
+
+                        if ui
+                            .button(egui::RichText::new("🔀").color(shuffle_btn_color))
+                            .on_hover_text("Shuffle")
+                            .clicked()
+                        {
+                            let is_shuf = self.queue.toggle_shuffle();
+                            if is_shuf != state.is_shuffle {
+                                self.controller.toggle_shuffle();
+                            }
                         }
+
                         if ui.button("⏮").on_hover_text("Previous").clicked() {
-                            // Replay from beginning
-                            self.controller.seek(Duration::ZERO);
+                            self.play_prev();
                         }
 
                         let play_btn_text = match state.status {
@@ -130,7 +231,9 @@ impl eframe::App for SpotyApp {
                             self.controller.toggle_play_pause();
                         }
 
-                        if ui.button("⏭").on_hover_text("Next").clicked() {}
+                        if ui.button("⏭").on_hover_text("Next").clicked() {
+                            self.play_next();
+                        }
 
                         let repeat_icon = match state.repeat_mode {
                             spoty_core::RepeatMode::Off => "🔁",
@@ -186,11 +289,27 @@ impl eframe::App for SpotyApp {
             .default_width(220.0)
             .width_range(160.0..=360.0)
             .show(ctx, |ui| {
+                ui.heading("Spoty");
+                ui.add_space(8.0);
+
+                if ui.button("🏠 Home").clicked() {
+                    self.nav.push(Route::Home);
+                }
+                if ui.button("🔍 Search").clicked() {
+                    self.nav.push(Route::Search);
+                }
+                if ui.button("⚙ Settings").clicked() {
+                    self.nav.push(Route::Settings);
+                }
+
+                ui.add_space(16.0);
                 ui.heading("Your Library");
                 ui.add_space(8.0);
 
                 for playlist in &self.library.playlists {
-                    ui.label(format!("📁 {}", playlist.title));
+                    if ui.button(format!("📁 {}", playlist.title)).clicked() {
+                        self.nav.push(Route::Playlist(playlist.id.clone()));
+                    }
                 }
 
                 ui.add_space(12.0);
@@ -198,78 +317,102 @@ impl eframe::App for SpotyApp {
                 for artist in &self.library.artists {
                     ui.label(format!("👤 {}", artist.name));
                 }
-
-                ui.add_space(12.0);
-                ui.label(egui::RichText::new("Albums").strong());
-                for album in &self.library.albums {
-                    ui.label(format!("💿 {}", album.title));
-                }
             });
 
-        // Central Panel: Catalog & Track List
+        // Central Panel: Render Active View
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Discover Music");
-            ui.add_space(12.0);
+            let active_track_id = state.current_track.as_ref().map(|t| &t.id);
+            let current_route = self.nav.current().clone();
 
-            let filter = self.search_query.to_lowercase();
-            let tracks: Vec<_> = self
-                .library
-                .tracks
-                .iter()
-                .filter(|t| {
-                    filter.is_empty()
-                        || t.title.to_lowercase().contains(&filter)
-                        || t.artist.to_lowercase().contains(&filter)
-                })
-                .collect();
+            match current_route {
+                Route::Home => {
+                    let mut nav_action = None;
+                    let mut play_action = None;
+                    let mut playlist_action = None;
 
-            egui::Grid::new("track_grid")
-                .striped(true)
-                .min_col_width(80.0)
-                .show(ui, |ui| {
-                    ui.label(egui::RichText::new("#").strong());
-                    ui.label(egui::RichText::new("Title").strong());
-                    ui.label(egui::RichText::new("Artist").strong());
-                    ui.label(egui::RichText::new("Album").strong());
-                    ui.label(egui::RichText::new("Duration").strong());
-                    ui.label(egui::RichText::new("Action").strong());
-                    ui.end_row();
+                    HomeView::show(
+                        ui,
+                        &self.library,
+                        active_track_id,
+                        &mut |route| nav_action = Some(route),
+                        &mut |track| play_action = Some(track),
+                        &mut |playlist| playlist_action = Some(playlist),
+                    );
 
-                    for (index, track) in tracks.iter().enumerate() {
-                        let is_current = state
-                            .current_track
-                            .as_ref()
-                            .map(|t| t.id == track.id)
-                            .unwrap_or(false);
-
-                        let title_color = if is_current {
-                            egui::Color32::from_rgb(0x1e, 0xd7, 0x60) // Spotify green for playing
-                        } else {
-                            egui::Color32::WHITE
-                        };
-
-                        ui.label(format!("{}", index + 1));
-                        ui.label(egui::RichText::new(&track.title).color(title_color));
-                        ui.label(&track.artist);
-                        ui.label(track.album.as_deref().unwrap_or("-"));
-                        ui.label(track.formatted_duration());
-
-                        let btn_text = if is_current && state.status == PlaybackStatus::Playing {
-                            "⏸ Pause"
-                        } else {
-                            "▶ Play"
-                        };
-
-                        if ui.button(btn_text).clicked() {
-                            if is_current {
-                                self.controller.toggle_play_pause();
-                            } else {
-                                self.play_track((*track).clone());
-                            }
-                        }
-                        ui.end_row();
+                    if let Some(route) = nav_action {
+                        self.nav.push(route);
                     }
-                });
+                    if let Some(track) = play_action {
+                        self.play_track(track);
+                    }
+                    if let Some(playlist) = playlist_action {
+                        let tracks: Vec<_> = playlist
+                            .track_ids
+                            .iter()
+                            .filter_map(|id| self.library.tracks.iter().find(|t| &t.id == id).cloned())
+                            .collect();
+                        self.play_all_tracks(tracks);
+                    }
+                }
+                Route::Search => {
+                    let mut play_action = None;
+
+                    SearchView::show(
+                        ui,
+                        &self.library,
+                        &mut self.search_query,
+                        active_track_id,
+                        &mut |track| play_action = Some(track),
+                    );
+
+                    if let Some(track) = play_action {
+                        self.play_track(track);
+                    }
+                }
+                Route::Playlist(playlist_id) => {
+                    let mut play_action = None;
+                    let mut play_all_action = None;
+
+                    PlaylistView::show(
+                        ui,
+                        &self.library,
+                        &playlist_id,
+                        active_track_id,
+                        &mut |track| play_action = Some(track),
+                        &mut |tracks| play_all_action = Some(tracks),
+                    );
+
+                    if let Some(track) = play_action {
+                        self.play_track(track);
+                    }
+                    if let Some(tracks) = play_all_action {
+                        self.play_all_tracks(tracks);
+                    }
+                }
+                Route::Album(_) => {
+                    ui.label("Album view");
+                }
+                Route::Settings => {
+                    let provider_name = self.provider.display_name().to_string();
+                    let mut switch_fs_action = None;
+                    let mut switch_demo_action = false;
+
+                    SettingsView::show(
+                        ui,
+                        &provider_name,
+                        &mut self.local_dir_input,
+                        &mut |path| switch_fs_action = Some(path),
+                        &mut || switch_demo_action = true,
+                    );
+
+                    if let Some(path) = switch_fs_action {
+                        self.switch_to_local_fs(path);
+                    }
+                    if switch_demo_action {
+                        self.switch_to_demo();
+                    }
+                }
+            }
         });
     }
 }

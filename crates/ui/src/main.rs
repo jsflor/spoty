@@ -1,5 +1,7 @@
 mod app;
+mod navigation;
 mod theme;
+mod views;
 
 use app::SpotyApp;
 use eframe::egui;
@@ -9,8 +11,8 @@ fn main() -> eframe::Result {
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1024.0, 720.0])
-            .with_min_inner_size([700.0, 500.0])
+            .with_inner_size([1080.0, 750.0])
+            .with_min_inner_size([720.0, 520.0])
             .with_title("Spoty — Open Self-Hosted Music Player"),
         ..Default::default()
     };
