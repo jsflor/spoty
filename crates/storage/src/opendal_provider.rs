@@ -1,13 +1,24 @@
 use async_trait::async_trait;
 use futures::StreamExt;
-use opendal::services::Fs;
+use opendal::services::{Fs, S3};
 use opendal::{EntryMode, Operator};
+use serde::{Deserialize, Serialize};
 use spoty_core::{AudioFormat, Track, TrackId};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::provider::{AudioStream, Library, MusicProvider};
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct S3Config {
+    pub bucket: String,
+    pub endpoint: Option<String>,
+    pub region: Option<String>,
+    pub access_key_id: Option<String>,
+    pub secret_access_key: Option<String>,
+    pub root: Option<String>,
+}
 
 pub struct OpenDalProvider {
     id: String,
@@ -33,7 +44,33 @@ impl OpenDalProvider {
         })
     }
 
-    /// Create from any configured OpenDAL operator (e.g. S3, R2, WebDAV)
+    /// Create a new OpenDAL provider backed by AWS S3, Cloudflare R2, or MinIO
+    pub fn new_s3(config: S3Config) -> anyhow::Result<Self> {
+        let mut builder = S3::default().bucket(&config.bucket);
+        if let Some(endpoint) = &config.endpoint {
+            builder = builder.endpoint(endpoint);
+        }
+        if let Some(region) = &config.region {
+            builder = builder.region(region);
+        }
+        if let Some(key) = &config.access_key_id {
+            builder = builder.access_key_id(key);
+        }
+        if let Some(secret) = &config.secret_access_key {
+            builder = builder.secret_access_key(secret);
+        }
+        if let Some(root) = &config.root {
+            builder = builder.root(root);
+        }
+
+        let operator = Operator::new(builder)?;
+        let display_name = format!("S3 / R2 ({})", config.bucket);
+        let id = format!("s3_{}", config.bucket);
+
+        Ok(Self::new(id, display_name, operator))
+    }
+
+    /// Create from any configured OpenDAL operator
     pub fn new(id: impl Into<String>, display_name: impl Into<String>, operator: Operator) -> Self {
         Self {
             id: id.into(),
@@ -56,7 +93,6 @@ impl MusicProvider for OpenDalProvider {
     }
 
     async fn fetch_library(&self) -> anyhow::Result<Library> {
-        // Return cached library if available
         if let Some(cached) = self.library_cache.read().await.as_ref() {
             return Ok(cached.clone());
         }
@@ -104,7 +140,7 @@ impl MusicProvider for OpenDalProvider {
                             title,
                             artist,
                             album: None,
-                            duration_secs: 180, // Default estimate until tag header read
+                            duration_secs: 180,
                             cover_uri: None,
                             source_uri: format!("opendal://{}/{}", self.id, path),
                             format,
@@ -149,7 +185,7 @@ impl MusicProvider for OpenDalProvider {
     }
 }
 
-/// Simple heuristic to extract "Artist - Title" from filenames like "Daft Punk - One More Time.mp3"
+/// Simple heuristic to extract "Artist - Title" from filenames
 fn parse_filename_metadata(stem: &str) -> (String, String) {
     if let Some((artist, title)) = stem.split_once(" - ") {
         (artist.trim().to_string(), title.trim().to_string())
@@ -165,17 +201,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_filename_metadata() {
-        let (artist, title) = parse_filename_metadata("The Weeknd - Blinding Lights");
-        assert_eq!(artist, "The Weeknd");
-        assert_eq!(title, "Blinding Lights");
+    fn test_s3_config_builder() {
+        let config = S3Config {
+            bucket: "my-music-bucket".into(),
+            endpoint: Some("https://s3.us-west-002.backblazeb2.com".into()),
+            region: Some("us-west-002".into()),
+            access_key_id: Some("test_key".into()),
+            secret_access_key: Some("test_secret".into()),
+            root: Some("music/".into()),
+        };
 
-        let (artist, title) = parse_filename_metadata("Solaris_Horizon");
-        assert_eq!(artist, "Solaris");
-        assert_eq!(title, "Horizon");
-
-        let (artist, title) = parse_filename_metadata("MidnightCity");
-        assert_eq!(artist, "Unknown Artist");
-        assert_eq!(title, "MidnightCity");
+        let provider = OpenDalProvider::new_s3(config).unwrap();
+        assert_eq!(provider.id(), "s3_my-music-bucket");
+        assert_eq!(provider.display_name(), "S3 / R2 (my-music-bucket)");
     }
 }

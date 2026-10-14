@@ -1,12 +1,13 @@
 use eframe::egui;
 use spoty_audio::{PlayerController, PlayerEvent};
 use spoty_core::{PlaybackStatus, Queue, Track};
-use spoty_storage::{DemoProvider, Library, MusicProvider, OpenDalProvider};
+use spoty_storage::{DemoProvider, Library, MusicProvider, OpenDalProvider, S3Config, SubsonicConfig, SubsonicProvider};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 
+use crate::config::{ProviderType, SpotyConfig};
 use crate::navigation::{NavigationHistory, Route};
 use crate::views::{HomeView, PlaylistView, SearchView, SettingsView};
 
@@ -18,21 +19,40 @@ pub struct SpotyApp {
     tokio_rt: Arc<tokio::runtime::Runtime>,
     nav: NavigationHistory,
     queue: Queue,
+    config: SpotyConfig,
     search_query: String,
-    local_dir_input: String,
 }
 
 impl SpotyApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         let tokio_rt = Arc::new(tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime"));
-        let provider: Arc<dyn MusicProvider> = Arc::new(DemoProvider::new());
+        let config = SpotyConfig::load();
+
+        // Initialize provider based on saved config
+        let provider: Arc<dyn MusicProvider> = match config.active_provider {
+            ProviderType::LocalFs if !config.local_path.is_empty() => {
+                match OpenDalProvider::new_fs(&config.local_path) {
+                    Ok(p) => Arc::new(p),
+                    Err(_) => Arc::new(DemoProvider::new()),
+                }
+            }
+            ProviderType::S3 if !config.s3.bucket.is_empty() => {
+                match OpenDalProvider::new_s3(config.s3.clone()) {
+                    Ok(p) => Arc::new(p),
+                    Err(_) => Arc::new(DemoProvider::new()),
+                }
+            }
+            ProviderType::Subsonic if !config.subsonic.server_url.is_empty() => {
+                Arc::new(SubsonicProvider::new(config.subsonic.clone()))
+            }
+            _ => Arc::new(DemoProvider::new()),
+        };
 
         let library = tokio_rt
             .block_on(provider.fetch_library())
             .unwrap_or_default();
 
         let (controller, event_rx) = PlayerController::new();
-
         let queue = Queue::with_tracks(library.tracks.clone(), None);
 
         Self {
@@ -43,8 +63,8 @@ impl SpotyApp {
             tokio_rt,
             nav: NavigationHistory::new(),
             queue,
+            config,
             search_query: String::new(),
-            local_dir_input: String::new(),
         }
     }
 
@@ -81,7 +101,6 @@ impl SpotyApp {
 
     fn play_prev(&mut self) {
         let state = self.controller.state();
-        // If track played for more than 3 seconds, replay from beginning
         if state.position_secs > 3.0 {
             self.controller.seek(Duration::ZERO);
         } else if let Some(prev_track) = self.queue.prev().cloned() {
@@ -96,37 +115,54 @@ impl SpotyApp {
         }
     }
 
+    fn switch_provider(&mut self, provider: Arc<dyn MusicProvider>, p_type: ProviderType) {
+        if let Ok(new_lib) = self.tokio_rt.block_on(provider.fetch_library()) {
+            self.provider = provider;
+            self.library = new_lib.clone();
+            self.queue.set_tracks(new_lib.tracks, None);
+            self.config.active_provider = p_type;
+            let _ = self.config.save();
+            self.nav.push(Route::Home);
+        }
+    }
+
     fn switch_to_local_fs(&mut self, path: String) {
         match OpenDalProvider::new_fs(&path) {
-            Ok(new_provider) => {
-                let provider_arc: Arc<dyn MusicProvider> = Arc::new(new_provider);
-                if let Ok(new_lib) = self.tokio_rt.block_on(provider_arc.fetch_library()) {
-                    self.provider = provider_arc;
-                    self.library = new_lib.clone();
-                    self.queue.set_tracks(new_lib.tracks, None);
-                    self.nav.push(Route::Home);
-                }
+            Ok(p) => {
+                self.config.local_path = path;
+                self.switch_provider(Arc::new(p), ProviderType::LocalFs);
             }
             Err(e) => {
-                tracing::error!("Failed to mount local directory: {}", e);
+                tracing::error!("Failed to mount local filesystem: {}", e);
             }
         }
     }
 
-    fn switch_to_demo(&mut self) {
-        let provider_arc: Arc<dyn MusicProvider> = Arc::new(DemoProvider::new());
-        if let Ok(new_lib) = self.tokio_rt.block_on(provider_arc.fetch_library()) {
-            self.provider = provider_arc;
-            self.library = new_lib.clone();
-            self.queue.set_tracks(new_lib.tracks, None);
-            self.nav.push(Route::Home);
+    fn switch_to_s3(&mut self, config: S3Config) {
+        match OpenDalProvider::new_s3(config.clone()) {
+            Ok(p) => {
+                self.config.s3 = config;
+                self.switch_provider(Arc::new(p), ProviderType::S3);
+            }
+            Err(e) => {
+                tracing::error!("Failed to mount S3 bucket: {}", e);
+            }
         }
+    }
+
+    fn switch_to_subsonic(&mut self, config: SubsonicConfig) {
+        let p = SubsonicProvider::new(config.clone());
+        self.config.subsonic = config;
+        self.switch_provider(Arc::new(p), ProviderType::Subsonic);
+    }
+
+    fn switch_to_demo(&mut self) {
+        self.switch_provider(Arc::new(DemoProvider::new()), ProviderType::Demo);
     }
 }
 
 impl eframe::App for SpotyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Drain incoming background audio worker events
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
                 PlayerEvent::StateChanged(state) => {
@@ -147,23 +183,13 @@ impl eframe::App for SpotyApp {
         // Top Panel: Navigation & Search
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                // Back button
                 let back_enabled = self.nav.can_go_back();
-                if ui
-                    .add_enabled(back_enabled, egui::Button::new("◀"))
-                    .on_hover_text("Go back")
-                    .clicked()
-                {
+                if ui.add_enabled(back_enabled, egui::Button::new("◀")).on_hover_text("Go back").clicked() {
                     self.nav.back();
                 }
 
-                // Forward button
                 let fwd_enabled = self.nav.can_go_forward();
-                if ui
-                    .add_enabled(fwd_enabled, egui::Button::new("▶"))
-                    .on_hover_text("Go forward")
-                    .clicked()
-                {
+                if ui.add_enabled(fwd_enabled, egui::Button::new("▶")).on_hover_text("Go forward").clicked() {
                     self.nav.forward();
                 }
 
@@ -184,7 +210,6 @@ impl eframe::App for SpotyApp {
         // Bottom Panel: Persistent Player
         egui::TopBottomPanel::bottom("player_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                // Left: Current track info
                 ui.allocate_ui(egui::vec2(220.0, 40.0), |ui| {
                     if let Some(track) = &state.current_track {
                         ui.vertical(|ui| {
@@ -196,7 +221,6 @@ impl eframe::App for SpotyApp {
                     }
                 });
 
-                // Center: Playback controls and timeline
                 ui.vertical_centered(|ui| {
                     ui.horizontal(|ui| {
                         ui.add_space(20.0);
@@ -207,11 +231,7 @@ impl eframe::App for SpotyApp {
                             egui::Color32::GRAY
                         };
 
-                        if ui
-                            .button(egui::RichText::new("🔀").color(shuffle_btn_color))
-                            .on_hover_text("Shuffle")
-                            .clicked()
-                        {
+                        if ui.button(egui::RichText::new("🔀").color(shuffle_btn_color)).on_hover_text("Shuffle").clicked() {
                             let is_shuf = self.queue.toggle_shuffle();
                             if is_shuf != state.is_shuffle {
                                 self.controller.toggle_shuffle();
@@ -245,7 +265,6 @@ impl eframe::App for SpotyApp {
                         }
                     });
 
-                    // Timeline progress bar
                     ui.horizontal(|ui| {
                         let current_mins = (state.position_secs / 60.0).floor() as u32;
                         let current_secs = (state.position_secs % 60.0).floor() as u32;
@@ -268,7 +287,6 @@ impl eframe::App for SpotyApp {
                     });
                 });
 
-                // Right: Volume control
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let mut volume = state.volume;
                     if ui.add(egui::Slider::new(&mut volume, 0.0..=1.0).show_value(false)).changed() {
@@ -319,7 +337,7 @@ impl eframe::App for SpotyApp {
                 }
             });
 
-        // Central Panel: Render Active View
+        // Central Panel
         egui::CentralPanel::default().show(ctx, |ui| {
             let active_track_id = state.current_track.as_ref().map(|t| &t.id);
             let current_route = self.nav.current().clone();
@@ -394,22 +412,32 @@ impl eframe::App for SpotyApp {
                 }
                 Route::Settings => {
                     let provider_name = self.provider.display_name().to_string();
-                    let mut switch_fs_action = None;
-                    let mut switch_demo_action = false;
+                    let mut switch_demo = false;
+                    let mut switch_fs = None;
+                    let mut switch_s3 = None;
+                    let mut switch_subsonic = None;
 
                     SettingsView::show(
                         ui,
                         &provider_name,
-                        &mut self.local_dir_input,
-                        &mut |path| switch_fs_action = Some(path),
-                        &mut || switch_demo_action = true,
+                        &mut self.config,
+                        &mut || switch_demo = true,
+                        &mut |path| switch_fs = Some(path),
+                        &mut |s3| switch_s3 = Some(s3),
+                        &mut |subsonic| switch_subsonic = Some(subsonic),
                     );
 
-                    if let Some(path) = switch_fs_action {
+                    if switch_demo {
+                        self.switch_to_demo();
+                    }
+                    if let Some(path) = switch_fs {
                         self.switch_to_local_fs(path);
                     }
-                    if switch_demo_action {
-                        self.switch_to_demo();
+                    if let Some(s3) = switch_s3 {
+                        self.switch_to_s3(s3);
+                    }
+                    if let Some(subsonic) = switch_subsonic {
+                        self.switch_to_subsonic(subsonic);
                     }
                 }
             }
