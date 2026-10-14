@@ -1,0 +1,22 @@
+[package]
+name = "spoty-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "spoty"
+path = "src/main.rs"
+
+[dependencies]
+spoty-core.workspace = true
+spoty-storage.workspace = true
+spoty-audio.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui_extras.workspace = true
+image.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true

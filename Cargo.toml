@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/storage",
+    "crates/audio",
+    "crates/ui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Spoty Contributors"]
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+spoty-core = { path = "crates/core" }
+spoty-storage = { path = "crates/storage" }
+spoty-audio = { path = "crates/audio" }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+anyhow = "1.0"
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+futures = "0.3"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+bytes = "1.9"
+
+# Audio decoding & playback
+rodio = "0.20"
+symphonia = { version = "0.5", features = ["all"] }
+
+# GUI
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "wgpu"] }
+egui = "0.31"
+egui_extras = { version = "0.31", features = ["all_loaders", "image"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
