@@ -1,7 +1,10 @@
 use eframe::egui;
 use spoty_audio::{PlayerController, PlayerEvent};
 use spoty_core::{PlaybackStatus, Queue, Track};
-use spoty_storage::{DemoProvider, Library, MusicProvider, OpenDalProvider, S3Config, SpotifyConfig, SpotifyProvider, SubsonicConfig, SubsonicProvider};
+use spoty_storage::{
+    DemoProvider, Library, LibraryDatabase, MusicProvider, OpenDalProvider, S3Config, SpotifyConfig,
+    SpotifyProvider, SubsonicConfig, SubsonicProvider,
+};
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
 use std::time::Duration;
@@ -21,6 +24,7 @@ pub struct SpotyApp {
     nav: NavigationHistory,
     queue: Queue,
     config: SpotyConfig,
+    db: LibraryDatabase,
     search_query: String,
     visualizer_levels: [f32; 16],
 }
@@ -29,6 +33,15 @@ impl SpotyApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         let tokio_rt = Arc::new(tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime"));
         let config = SpotyConfig::load();
+
+        // Initialize embedded SQLite database
+        let db_path = SpotyConfig::config_path()
+            .parent()
+            .map(|p| p.join("library.db"))
+            .unwrap_or_else(|| std::path::PathBuf::from("library.db"));
+
+        let db = LibraryDatabase::open_or_create(&db_path)
+            .unwrap_or_else(|_| LibraryDatabase::open_in_memory().unwrap());
 
         let provider: Arc<dyn MusicProvider> = match config.active_provider {
             ProviderType::LocalFs if !config.local_path.is_empty() => {
@@ -52,9 +65,21 @@ impl SpotyApp {
             _ => Arc::new(DemoProvider::new()),
         };
 
-        let library = tokio_rt
+        // Load library from provider, upsert tracks into SQLite
+        let mut library = tokio_rt
             .block_on(provider.fetch_library())
             .unwrap_or_default();
+
+        let _ = db.upsert_tracks(&library.tracks);
+
+        // Merge any user-created playlists from SQLite
+        if let Ok(db_lib) = db.load_library() {
+            for pl in db_lib.playlists {
+                if !library.playlists.iter().any(|p| p.id == pl.id) {
+                    library.playlists.push(pl);
+                }
+            }
+        }
 
         let (controller, event_rx) = PlayerController::new();
         let queue = Queue::with_tracks(library.tracks.clone(), None);
@@ -68,6 +93,7 @@ impl SpotyApp {
             nav: NavigationHistory::new(),
             queue,
             config,
+            db,
             search_query: String::new(),
             visualizer_levels: [0.0; 16],
         }
@@ -122,6 +148,7 @@ impl SpotyApp {
 
     fn switch_provider(&mut self, provider: Arc<dyn MusicProvider>, p_type: ProviderType) {
         if let Ok(new_lib) = self.tokio_rt.block_on(provider.fetch_library()) {
+            let _ = self.db.upsert_tracks(&new_lib.tracks);
             self.provider = provider;
             self.library = new_lib.clone();
             self.queue.set_tracks(new_lib.tracks, None);
@@ -226,8 +253,8 @@ impl eframe::App for SpotyApp {
         // Bottom Panel: Persistent Player
         egui::TopBottomPanel::bottom("player_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                // Left: Track cover art & details
-                ui.allocate_ui(egui::vec2(260.0, 48.0), |ui| {
+                // Left: Track cover art, title, artist, and Heart/Favorite button
+                ui.allocate_ui(egui::vec2(280.0, 48.0), |ui| {
                     ui.horizontal(|ui| {
                         if let Some(track) = &state.current_track {
                             if let Some(uri) = &track.cover_uri {
@@ -247,6 +274,15 @@ impl eframe::App for SpotyApp {
                                 ui.label(egui::RichText::new(&track.title).strong().color(egui::Color32::WHITE));
                                 ui.label(egui::RichText::new(&track.artist).small().color(egui::Color32::GRAY));
                             });
+
+                            ui.add_space(8.0);
+
+                            // Interactive Heart / Favorite button
+                            let is_fav = self.db.is_favorite(&track.id).unwrap_or(false);
+                            let heart_icon = if is_fav { "💚" } else { "♡" };
+                            if ui.button(egui::RichText::new(heart_icon).size(15.0)).on_hover_text("Toggle Favorite").clicked() {
+                                let _ = self.db.toggle_favorite(&track.id);
+                            }
                         } else {
                             ui.label(egui::RichText::new("No track playing").weak());
                         }
@@ -334,7 +370,6 @@ impl eframe::App for SpotyApp {
 
                     ui.add_space(16.0);
 
-                    // Real-time audio spectrum visualizer
                     VisualizerWidget::new(&self.visualizer_levels, is_playing).show(ui);
                 });
             });
@@ -343,7 +378,7 @@ impl eframe::App for SpotyApp {
         // Left Panel: "Your Library"
         egui::SidePanel::left("library_sidebar")
             .resizable(true)
-            .default_width(220.0)
+            .default_width(230.0)
             .width_range(160.0..=360.0)
             .show(ctx, |ui| {
                 ui.heading("Spoty");
@@ -360,7 +395,20 @@ impl eframe::App for SpotyApp {
                 }
 
                 ui.add_space(16.0);
-                ui.heading("Your Library");
+
+                // Library header with "+ Create Playlist" button
+                ui.horizontal(|ui| {
+                    ui.heading("Your Library");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button(egui::RichText::new("＋").strong()).on_hover_text("Create Custom Playlist").clicked() {
+                            let pl_name = format!("My Playlist #{}", self.library.playlists.len() + 1);
+                            if let Ok(new_pl) = self.db.create_playlist(&pl_name, None) {
+                                self.library.playlists.push(new_pl);
+                            }
+                        }
+                    });
+                });
+
                 ui.add_space(8.0);
 
                 for playlist in &self.library.playlists {
@@ -430,15 +478,24 @@ impl eframe::App for SpotyApp {
                     let mut play_action = None;
                     let mut play_all_action = None;
 
+                    let db_ref = &self.db;
+                    let is_fav_closure = |tid: &spoty_core::TrackId| db_ref.is_favorite(tid).unwrap_or(false);
+                    let mut toggle_fav_action = None;
+
                     PlaylistView::show(
                         ui,
                         &self.library,
                         &playlist_id,
                         active_track_id,
+                        &is_fav_closure,
+                        &mut |tid| toggle_fav_action = Some(tid),
                         &mut |track| play_action = Some(track),
                         &mut |tracks| play_all_action = Some(tracks),
                     );
 
+                    if let Some(tid) = toggle_fav_action {
+                        let _ = self.db.toggle_favorite(&tid);
+                    }
                     if let Some(track) = play_action {
                         self.play_track(track);
                     }

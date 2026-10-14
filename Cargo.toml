@@ -30,6 +30,7 @@ tracing-subscriber = "0.3"
 bytes = "1.9"
 opendal = { version = "0.59", default-features = false, features = ["services-fs", "services-s3"] }
 lofty = "0.25"
+rusqlite = { version = "0.40", features = ["bundled"] }
 
 # Audio decoding & playback
 rodio = "0.20"

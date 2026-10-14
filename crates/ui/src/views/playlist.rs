@@ -10,6 +10,8 @@ impl PlaylistView {
         library: &Library,
         playlist_id: &PlaylistId,
         current_track_id: Option<&spoty_core::TrackId>,
+        is_track_fav: &impl Fn(&spoty_core::TrackId) -> bool,
+        on_toggle_fav: &mut impl FnMut(spoty_core::TrackId),
         on_play_track: &mut impl FnMut(Track),
         on_play_all: &mut impl FnMut(Vec<Track>),
     ) {
@@ -88,7 +90,6 @@ impl PlaylistView {
             }
 
             ui.add_space(12.0);
-            ui.label(egui::RichText::new("♡").size(20.0).color(egui::Color32::GRAY));
             ui.label(egui::RichText::new("•••").size(18.0).color(egui::Color32::GRAY));
         });
 
@@ -104,6 +105,7 @@ impl PlaylistView {
                 ui.label(egui::RichText::new("Artist").strong());
                 ui.label(egui::RichText::new("Album").strong());
                 ui.label(egui::RichText::new("Duration").strong());
+                ui.label(egui::RichText::new("Fav").strong());
                 ui.label(egui::RichText::new("Action").strong());
                 ui.end_row();
 
@@ -120,6 +122,12 @@ impl PlaylistView {
                     ui.label(&track.artist);
                     ui.label(track.album.as_deref().unwrap_or("-"));
                     ui.label(track.formatted_duration());
+
+                    let fav = is_track_fav(&track.id);
+                    let fav_icon = if fav { "💚" } else { "♡" };
+                    if ui.button(fav_icon).clicked() {
+                        on_toggle_fav(track.id.clone());
+                    }
 
                     if ui.button("▶").clicked() {
                         on_play_track(track.clone());
