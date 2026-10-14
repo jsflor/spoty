@@ -197,10 +197,96 @@ impl SpotyApp {
     fn switch_to_demo(&mut self) {
         self.switch_provider(Arc::new(DemoProvider::new()), ProviderType::Demo);
     }
+
+    fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.wants_keyboard_input() {
+            return;
+        }
+
+        let mut toggle_play = false;
+        let mut toggle_mute = false;
+        let mut toggle_shuffle = false;
+        let mut cycle_repeat = false;
+        let mut seek_delta: Option<f64> = None;
+        let mut vol_delta: Option<f32> = None;
+        let mut next_track = false;
+        let mut prev_track = false;
+
+        ctx.input(|i| {
+            if i.key_pressed(egui::Key::Space) {
+                toggle_play = true;
+            }
+            if i.key_pressed(egui::Key::M) {
+                toggle_mute = true;
+            }
+            if i.key_pressed(egui::Key::S) {
+                toggle_shuffle = true;
+            }
+            if i.key_pressed(egui::Key::R) {
+                cycle_repeat = true;
+            }
+
+            if i.key_pressed(egui::Key::ArrowRight) {
+                if i.modifiers.shift {
+                    next_track = true;
+                } else {
+                    seek_delta = Some(5.0);
+                }
+            }
+            if i.key_pressed(egui::Key::ArrowLeft) {
+                if i.modifiers.shift {
+                    prev_track = true;
+                } else {
+                    seek_delta = Some(-5.0);
+                }
+            }
+
+            if i.key_pressed(egui::Key::ArrowUp) {
+                vol_delta = Some(0.05);
+            }
+            if i.key_pressed(egui::Key::ArrowDown) {
+                vol_delta = Some(-0.05);
+            }
+        });
+
+        if toggle_play {
+            self.controller.toggle_play_pause();
+        }
+        if toggle_mute {
+            self.controller.toggle_mute();
+        }
+        if toggle_shuffle {
+            let is_shuf = self.queue.toggle_shuffle();
+            if is_shuf != self.controller.state().is_shuffle {
+                self.controller.toggle_shuffle();
+            }
+        }
+        if cycle_repeat {
+            self.controller.cycle_repeat_mode();
+        }
+        if next_track {
+            self.play_next();
+        }
+        if prev_track {
+            self.play_prev();
+        }
+        if let Some(delta) = seek_delta {
+            let current = self.controller.state().position_secs;
+            let target = (current + delta).clamp(0.0, self.controller.state().duration_secs);
+            self.controller.seek(Duration::from_secs_f64(target));
+        }
+        if let Some(delta) = vol_delta {
+            let current = self.controller.state().volume;
+            let target = (current + delta).clamp(0.0, 1.0);
+            self.controller.set_volume(target);
+        }
+    }
 }
 
 impl eframe::App for SpotyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.handle_keyboard_shortcuts(ctx);
+
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
                 PlayerEvent::StateChanged(state) => {
