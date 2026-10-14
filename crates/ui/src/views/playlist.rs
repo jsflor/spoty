@@ -1,11 +1,11 @@
-use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, Vec2};
-use spoty_core::{PlaylistId, Track};
-use spoty_storage::Library;
 use crate::theme::{
     COLOR_ACCENT_GREEN, COLOR_BG_CARD, COLOR_BG_HIGHLIGHT, COLOR_DIVIDER, COLOR_TEXT_BASE,
     COLOR_TEXT_SUBDUED,
 };
 use crate::widgets::play_circle_button;
+use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, Vec2};
+use spoty_core::{PlaylistId, Track, TrackId};
+use spoty_storage::Library;
 
 pub struct PlaylistView;
 
@@ -19,6 +19,9 @@ impl PlaylistView {
         on_toggle_fav: &mut impl FnMut(spoty_core::TrackId),
         on_play_track: &mut impl FnMut(Track),
         on_play_all: &mut impl FnMut(Vec<Track>),
+        on_edit_details: &mut impl FnMut(PlaylistId),
+        on_delete_playlist: &mut impl FnMut(PlaylistId),
+        on_remove_track: &mut impl FnMut(PlaylistId, TrackId),
     ) {
         let playlist = match library.playlists.iter().find(|p| &p.id == playlist_id) {
             Some(p) => p,
@@ -57,7 +60,11 @@ impl PlaylistView {
                             img.paint_at(ui, art_rect);
                         } else {
                             p.rect_filled(art_rect, CornerRadius::same(4), COLOR_BG_CARD);
-                            p.circle_stroke(art_rect.center(), 40.0, Stroke::new(1.0_f32, Color32::from_black_alpha(40)));
+                            p.circle_stroke(
+                                art_rect.center(),
+                                40.0,
+                                Stroke::new(1.0_f32, Color32::from_black_alpha(40)),
+                            );
                             p.text(
                                 art_rect.center(),
                                 egui::Align2::CENTER_CENTER,
@@ -127,6 +134,7 @@ impl PlaylistView {
         ui.add_space(18.0);
 
         // 2. Action Bar: 48px Circular Green Play Button + Options
+        let is_custom = playlist.id.as_str().starts_with("custom_pl_");
         ui.horizontal(|ui| {
             if play_circle_button(ui, 48.0, false, Some(COLOR_ACCENT_GREEN))
                 .on_hover_text("Play Playlist")
@@ -137,12 +145,34 @@ impl PlaylistView {
 
             ui.add_space(16.0);
 
-            let (dots_rect, dots_resp) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::click());
-            if ui.is_rect_visible(dots_rect) {
-                let p = ui.painter();
-                let col = if dots_resp.hovered() { COLOR_TEXT_BASE } else { COLOR_TEXT_SUBDUED };
-                p.text(dots_rect.center(), egui::Align2::CENTER_CENTER, "•••", FontId::proportional(18.0), col);
-            }
+            ui.menu_button(
+                egui::RichText::new("•••")
+                    .size(18.0)
+                    .color(COLOR_TEXT_SUBDUED),
+                |ui| {
+                    ui.set_min_width(140.0);
+                    if is_custom {
+                        if ui.button("✏  Edit details").clicked() {
+                            on_edit_details(playlist.id.clone());
+                            ui.close_menu();
+                        }
+                        if ui
+                            .button(
+                                egui::RichText::new("🗑  Delete playlist")
+                                    .color(Color32::from_rgb(0xff, 0x60, 0x60)),
+                            )
+                            .clicked()
+                        {
+                            on_delete_playlist(playlist.id.clone());
+                            ui.close_menu();
+                        }
+                    } else {
+                        ui.label(
+                            egui::RichText::new("Built-in playlist").color(COLOR_TEXT_SUBDUED),
+                        );
+                    }
+                },
+            );
         });
 
         ui.add_space(18.0);
@@ -202,10 +232,8 @@ impl PlaylistView {
         for (index, track) in tracks.iter().enumerate() {
             let is_current = current_track_id == Some(&track.id);
             let row_height = 54.0;
-            let (row_rect, row_resp) = ui.allocate_exact_size(
-                Vec2::new(table_width, row_height),
-                Sense::click(),
-            );
+            let (row_rect, row_resp) =
+                ui.allocate_exact_size(Vec2::new(table_width, row_height), Sense::click());
 
             if ui.is_rect_visible(row_rect) {
                 let p = ui.painter();
@@ -256,11 +284,21 @@ impl PlaylistView {
                     img.paint_at(ui, thumb_rect);
                 } else {
                     p.rect_filled(thumb_rect, CornerRadius::same(3), COLOR_BG_CARD);
-                    p.text(thumb_rect.center(), egui::Align2::CENTER_CENTER, "🎵", FontId::proportional(16.0), COLOR_TEXT_SUBDUED);
+                    p.text(
+                        thumb_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "🎵",
+                        FontId::proportional(16.0),
+                        COLOR_TEXT_SUBDUED,
+                    );
                 }
 
                 // Title & Artist
-                let title_col = if is_current { COLOR_ACCENT_GREEN } else { COLOR_TEXT_BASE };
+                let title_col = if is_current {
+                    COLOR_ACCENT_GREEN
+                } else {
+                    COLOR_TEXT_BASE
+                };
                 p.text(
                     Pos2::new(row_rect.left() + 86.0, row_rect.min.y + 16.0),
                     egui::Align2::LEFT_TOP,
@@ -301,8 +339,68 @@ impl PlaylistView {
                 on_play_track(track.clone());
             }
 
-            // Interactive Heart Button on the right
             let fav = is_track_fav(&track.id);
+
+            row_resp.context_menu(|ui| {
+                ui.set_min_width(170.0);
+                if fav {
+                    if ui.button("Remove from your Liked Songs").clicked() {
+                        on_toggle_fav(track.id.clone());
+                        ui.close_menu();
+                    }
+                } else {
+                    if ui.button("Save to your Liked Songs").clicked() {
+                        on_toggle_fav(track.id.clone());
+                        ui.close_menu();
+                    }
+                }
+
+                if is_custom {
+                    if ui
+                        .button(
+                            egui::RichText::new("Remove from this playlist")
+                                .color(Color32::from_rgb(0xff, 0x60, 0x60)),
+                        )
+                        .clicked()
+                    {
+                        on_remove_track(playlist.id.clone(), track.id.clone());
+                        ui.close_menu();
+                    }
+                }
+            });
+
+            // Remove button for custom playlists
+            if is_custom {
+                let remove_rect = Rect::from_center_size(
+                    Pos2::new(row_rect.right() - 104.0, row_rect.center().y),
+                    Vec2::splat(22.0),
+                );
+                let remove_resp = ui.allocate_rect(remove_rect, Sense::click());
+                if ui.is_rect_visible(remove_rect) && (row_resp.hovered() || remove_resp.hovered())
+                {
+                    let p = ui.painter();
+                    let col = if remove_resp.hovered() {
+                        Color32::from_rgb(0xff, 0x60, 0x60)
+                    } else {
+                        COLOR_TEXT_SUBDUED
+                    };
+                    p.text(
+                        remove_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "✕",
+                        FontId::proportional(12.0),
+                        col,
+                    );
+                }
+                if remove_resp
+                    .on_hover_text("Remove from this playlist")
+                    .clicked()
+                {
+                    on_remove_track(playlist.id.clone(), track.id.clone());
+                }
+            }
+
+            // Interactive Heart Button on the right
             let heart_rect = Rect::from_center_size(
                 Pos2::new(row_rect.right() - 74.0, row_rect.center().y),
                 Vec2::splat(24.0),

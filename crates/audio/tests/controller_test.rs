@@ -23,7 +23,9 @@ fn test_player_controller_lifecycle() {
     controller.load_track(track.clone(), wav_bytes);
 
     // Wait for state event from worker
-    let event = event_rx.recv_timeout(Duration::from_secs(1)).expect("Timed out waiting for worker event");
+    let event = event_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Timed out waiting for worker event");
     if let PlayerEvent::StateChanged(state) = event {
         assert_eq!(state.status, PlaybackStatus::Playing);
         assert_eq!(state.current_track.unwrap().title, "Test Track");
@@ -32,7 +34,9 @@ fn test_player_controller_lifecycle() {
     }
 
     controller.pause();
-    let event = event_rx.recv_timeout(Duration::from_secs(1)).expect("Timed out waiting for pause event");
+    let event = event_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("Timed out waiting for pause event");
     if let PlayerEvent::StateChanged(state) = event {
         assert_eq!(state.status, PlaybackStatus::Paused);
     }

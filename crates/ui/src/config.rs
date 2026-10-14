@@ -45,7 +45,10 @@ impl Default for SpotyConfig {
 impl SpotyConfig {
     pub fn config_path() -> PathBuf {
         if let Some(home) = std::env::var_os("HOME") {
-            PathBuf::from(home).join(".config").join("spoty").join("config.json")
+            PathBuf::from(home)
+                .join(".config")
+                .join("spoty")
+                .join("config.json")
         } else {
             PathBuf::from("spoty_config.json")
         }

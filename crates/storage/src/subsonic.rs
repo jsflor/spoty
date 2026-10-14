@@ -1,3 +1,4 @@
+use crate::provider::{AudioStream, Library, MusicProvider};
 use async_trait::async_trait;
 use md5::{Digest, Md5};
 use serde::{Deserialize, Serialize};
@@ -6,7 +7,6 @@ use std::collections::HashMap;
 use std::io::{Cursor, Read};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::provider::{AudioStream, Library, MusicProvider};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SubsonicConfig {
@@ -16,7 +16,11 @@ pub struct SubsonicConfig {
 }
 
 impl SubsonicConfig {
-    pub fn new(server_url: impl Into<String>, username: impl Into<String>, password: impl Into<String>) -> Self {
+    pub fn new(
+        server_url: impl Into<String>,
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
         Self {
             server_url: server_url.into(),
             username: username.into(),
@@ -29,7 +33,10 @@ impl SubsonicConfig {
         let mut hasher = Md5::new();
         hasher.update(format!("{}{}", self.password, salt).as_bytes());
         let result = hasher.finalize();
-        let token = result.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+        let token = result
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
         (token, salt.to_string())
     }
 
@@ -62,8 +69,13 @@ impl SubsonicProvider {
     /// Test server reachability with ping.view
     pub fn ping(&self) -> anyhow::Result<bool> {
         let url = self.config.endpoint_url("ping");
-        let resp: serde_json::Value = ureq::get(&url).timeout(std::time::Duration::from_secs(5)).call()?.into_json()?;
-        let status = resp["subsonic-response"]["status"].as_str().unwrap_or("failed");
+        let resp: serde_json::Value = ureq::get(&url)
+            .timeout(std::time::Duration::from_secs(5))
+            .call()?
+            .into_json()?;
+        let status = resp["subsonic-response"]["status"]
+            .as_str()
+            .unwrap_or("failed");
         Ok(status == "ok")
     }
 }
@@ -154,7 +166,11 @@ impl MusicProvider for SubsonicProvider {
     }
 
     async fn search(&self, query: &str) -> anyhow::Result<Vec<Track>> {
-        let search_url = format!("{}&query={}&songCount=30", self.config.endpoint_url("search3"), query);
+        let search_url = format!(
+            "{}&query={}&songCount=30",
+            self.config.endpoint_url("search3"),
+            query
+        );
         let resp: serde_json::Value = ureq::get(&search_url).call()?.into_json()?;
 
         let mut results = Vec::new();
@@ -168,7 +184,10 @@ impl MusicProvider for SubsonicProvider {
                 let suffix = s["suffix"].as_str().unwrap_or("mp3");
 
                 let track_id = TrackId::new(format!("subsonic_{}", sid));
-                self.subsonic_id_map.write().await.insert(track_id.clone(), sid.clone());
+                self.subsonic_id_map
+                    .write()
+                    .await
+                    .insert(track_id.clone(), sid.clone());
 
                 results.push(Track {
                     id: track_id,
@@ -216,7 +235,10 @@ mod tests {
         let mut hasher = Md5::new();
         hasher.update(b"secret123test_salt");
         let result = hasher.finalize();
-        let expected = result.iter().map(|b| format!("{:02x}", b)).collect::<String>();
+        let expected = result
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
         assert_eq!(token, expected);
     }
 

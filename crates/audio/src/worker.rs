@@ -1,9 +1,9 @@
+use crate::engine::{PlayerCommand, PlayerEvent};
+use rodio::{Decoder, OutputStream, Sink};
+use spoty_core::{PlaybackState, PlaybackStatus, RepeatMode};
 use std::io::Cursor;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
-use rodio::{Decoder, OutputStream, Sink};
-use spoty_core::{PlaybackState, PlaybackStatus, RepeatMode};
-use crate::engine::{PlayerCommand, PlayerEvent};
 
 pub struct AudioWorker {
     cmd_rx: Receiver<PlayerCommand>,
@@ -205,7 +205,8 @@ impl AudioWorker {
                             _ => {
                                 self.state.status = PlaybackStatus::Stopped;
                                 self.state.position_secs = 0.0;
-                                let _ = self.event_tx.send(PlayerEvent::VisualizerLevels([0.0; 16]));
+                                let _ =
+                                    self.event_tx.send(PlayerEvent::VisualizerLevels([0.0; 16]));
                             }
                         }
                     }
@@ -217,7 +218,11 @@ impl AudioWorker {
                     // Calculate real-time dynamic frequency amplitudes for visualizer
                     let t = self.state.position_secs as f32;
                     let mut levels = [0.0f32; 16];
-                    let active_vol = if self.state.is_muted { 0.0 } else { self.state.volume };
+                    let active_vol = if self.state.is_muted {
+                        0.0
+                    } else {
+                        self.state.volume
+                    };
 
                     for (bin, level) in levels.iter_mut().enumerate() {
                         let harmonic = (bin as f32 + 1.0) * 1.8;

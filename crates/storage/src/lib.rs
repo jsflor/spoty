@@ -8,7 +8,7 @@ pub mod subsonic;
 
 pub use db::LibraryDatabase;
 pub use demo::DemoProvider;
-pub use metadata::{extract_audio_metadata, ExtractedMetadata};
+pub use metadata::{ExtractedMetadata, extract_audio_metadata};
 pub use opendal_provider::{OpenDalProvider, S3Config};
 pub use provider::{AudioStream, Library, MusicProvider};
 pub use spotify::{SpotifyConfig, SpotifyProvider};

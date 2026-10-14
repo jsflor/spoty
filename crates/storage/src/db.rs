@@ -1,8 +1,8 @@
-use rusqlite::{params, Connection};
+use crate::provider::Library;
+use rusqlite::{Connection, params};
 use spoty_core::{AudioFormat, Playlist, PlaylistId, Track, TrackId};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use crate::provider::Library;
 
 #[derive(Clone)]
 pub struct LibraryDatabase {
@@ -92,7 +92,9 @@ impl LibraryDatabase {
             )?;
 
             for t in tracks {
-                let fmt_str = serde_json::to_string(&t.format).unwrap_or_default().replace('"', "");
+                let fmt_str = serde_json::to_string(&t.format)
+                    .unwrap_or_default()
+                    .replace('"', "");
                 stmt.execute(params![
                     t.id.as_str(),
                     t.title,
@@ -149,7 +151,8 @@ impl LibraryDatabase {
         }
 
         // 2. Load Playlists
-        let mut pl_stmt = conn.prepare("SELECT id, title, description, cover_uri FROM playlists")?;
+        let mut pl_stmt =
+            conn.prepare("SELECT id, title, description, cover_uri FROM playlists")?;
         let pl_iter = pl_stmt.query_map([], |row| {
             let id_str: String = row.get(0)?;
             let title: String = row.get(1)?;
@@ -240,9 +243,18 @@ impl LibraryDatabase {
         Ok(favs)
     }
 
-    pub fn create_playlist(&self, title: &str, description: Option<&str>) -> anyhow::Result<Playlist> {
+    pub fn create_playlist(
+        &self,
+        title: &str,
+        description: Option<&str>,
+    ) -> anyhow::Result<Playlist> {
         let conn = self.conn.lock().unwrap();
-        let pl_id = format!("custom_pl_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis());
+        let pl_id = format!(
+            "custom_pl_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_millis()
+        );
 
         conn.execute(
             "INSERT INTO playlists (id, title, description, cover_uri) VALUES (?1, ?2, ?3, NULL)",
@@ -258,7 +270,11 @@ impl LibraryDatabase {
         })
     }
 
-    pub fn add_track_to_playlist(&self, playlist_id: &PlaylistId, track_id: &TrackId) -> anyhow::Result<()> {
+    pub fn add_track_to_playlist(
+        &self,
+        playlist_id: &PlaylistId,
+        track_id: &TrackId,
+    ) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         let next_pos: u32 = conn.query_row(
             "SELECT COALESCE(MAX(position), 0) + 1 FROM playlist_tracks WHERE playlist_id = ?1",
@@ -271,6 +287,51 @@ impl LibraryDatabase {
             params![playlist_id.as_str(), track_id.as_str(), next_pos],
         )?;
 
+        Ok(())
+    }
+
+    /// Deletes a playlist and all its associated track entries
+    pub fn delete_playlist(&self, playlist_id: &PlaylistId) -> anyhow::Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute(
+            "DELETE FROM playlist_tracks WHERE playlist_id = ?1",
+            params![playlist_id.as_str()],
+        )?;
+        tx.execute(
+            "DELETE FROM playlists WHERE id = ?1",
+            params![playlist_id.as_str()],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Removes a single track from a playlist
+    pub fn remove_track_from_playlist(
+        &self,
+        playlist_id: &PlaylistId,
+        track_id: &TrackId,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "DELETE FROM playlist_tracks WHERE playlist_id = ?1 AND track_id = ?2",
+            params![playlist_id.as_str(), track_id.as_str()],
+        )?;
+        Ok(())
+    }
+
+    /// Renames a playlist and optionally updates its description
+    pub fn rename_playlist(
+        &self,
+        playlist_id: &PlaylistId,
+        new_title: &str,
+        new_description: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE playlists SET title = ?1, description = COALESCE(?2, description) WHERE id = ?3",
+            params![new_title, new_description, playlist_id.as_str()],
+        )?;
         Ok(())
     }
 }
@@ -311,7 +372,9 @@ mod tests {
         assert!(!db.is_favorite(&track1.id).unwrap());
 
         // Custom playlist test
-        let playlist = db.create_playlist("My Chill Mix", Some("Relaxing tunes")).unwrap();
+        let playlist = db
+            .create_playlist("My Chill Mix", Some("Relaxing tunes"))
+            .unwrap();
         db.add_track_to_playlist(&playlist.id, &track1.id).unwrap();
 
         let updated_lib = db.load_library().unwrap();
@@ -319,5 +382,27 @@ mod tests {
         assert_eq!(updated_lib.playlists[0].title, "My Chill Mix");
         assert_eq!(updated_lib.playlists[0].track_ids.len(), 1);
         assert_eq!(updated_lib.playlists[0].track_ids[0], track1.id);
+
+        // Rename playlist test
+        db.rename_playlist(&playlist.id, "Super Chill Mix", Some("Updated description"))
+            .unwrap();
+        let renamed_lib = db.load_library().unwrap();
+        assert_eq!(renamed_lib.playlists[0].title, "Super Chill Mix");
+        assert_eq!(
+            renamed_lib.playlists[0].description.as_deref(),
+            Some("Updated description")
+        );
+
+        // Remove track from playlist test
+        db.remove_track_from_playlist(&playlist.id, &track1.id)
+            .unwrap();
+        let track_removed_lib = db.load_library().unwrap();
+        assert_eq!(track_removed_lib.playlists[0].track_ids.len(), 0);
+
+        // Delete playlist test
+        db.add_track_to_playlist(&playlist.id, &track1.id).unwrap();
+        db.delete_playlist(&playlist.id).unwrap();
+        let deleted_lib = db.load_library().unwrap();
+        assert_eq!(deleted_lib.playlists.len(), 0);
     }
 }

@@ -12,7 +12,12 @@ impl SearchView {
         current_track_id: Option<&spoty_core::TrackId>,
         on_play_track: &mut impl FnMut(Track),
     ) {
-        ui.heading(egui::RichText::new("Search").size(26.0).strong().color(egui::Color32::WHITE));
+        ui.heading(
+            egui::RichText::new("Search")
+                .size(26.0)
+                .strong()
+                .color(egui::Color32::WHITE),
+        );
         ui.add_space(12.0);
 
         ui.horizontal(|ui| {
@@ -29,7 +34,12 @@ impl SearchView {
 
         if query.is_empty() {
             // Show Spotify-like "Browse All" colorful category cards
-            ui.label(egui::RichText::new("Browse All").size(18.0).strong().color(egui::Color32::WHITE));
+            ui.label(
+                egui::RichText::new("Browse All")
+                    .size(18.0)
+                    .strong()
+                    .color(egui::Color32::WHITE),
+            );
             ui.add_space(12.0);
 
             let categories = [
@@ -45,8 +55,10 @@ impl SearchView {
                 .spacing([16.0, 16.0])
                 .show(ui, |ui| {
                     for (i, (name, color)) in categories.iter().enumerate() {
-                        let (rect, _response) = ui.allocate_exact_size(egui::vec2(160.0, 95.0), egui::Sense::click());
-                        ui.painter().rect_filled(rect, egui::CornerRadius::same(8), *color);
+                        let (rect, _response) =
+                            ui.allocate_exact_size(egui::vec2(160.0, 95.0), egui::Sense::click());
+                        ui.painter()
+                            .rect_filled(rect, egui::CornerRadius::same(8), *color);
                         ui.painter().text(
                             rect.min + egui::vec2(12.0, 12.0),
                             egui::Align2::LEFT_TOP,
@@ -68,14 +80,25 @@ impl SearchView {
                 .filter(|t| {
                     t.title.to_lowercase().contains(&query)
                         || t.artist.to_lowercase().contains(&query)
-                        || t.album.as_deref().unwrap_or("").to_lowercase().contains(&query)
+                        || t.album
+                            .as_deref()
+                            .unwrap_or("")
+                            .to_lowercase()
+                            .contains(&query)
                 })
                 .collect();
 
             if matches.is_empty() {
-                ui.label(egui::RichText::new(format!("No results found for \"{}\"", query)).color(egui::Color32::GRAY));
+                ui.label(
+                    egui::RichText::new(format!("No results found for \"{}\"", query))
+                        .color(egui::Color32::GRAY),
+                );
             } else {
-                ui.label(egui::RichText::new(format!("Results ({} tracks)", matches.len())).strong().color(egui::Color32::WHITE));
+                ui.label(
+                    egui::RichText::new(format!("Results ({} tracks)", matches.len()))
+                        .strong()
+                        .color(egui::Color32::WHITE),
+                );
                 ui.add_space(8.0);
 
                 egui::Grid::new("search_results_grid")

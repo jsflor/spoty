@@ -12,10 +12,7 @@ pub enum PlayerCommand {
     ToggleMute,
     ToggleShuffle,
     CycleRepeatMode,
-    LoadTrack {
-        track: Track,
-        audio_bytes: Vec<u8>,
-    },
+    LoadTrack { track: Track, audio_bytes: Vec<u8> },
 }
 
 #[derive(Debug, Clone, PartialEq)]

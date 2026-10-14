@@ -1,6 +1,10 @@
-use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Response, Sense, Stroke, Vec2};
+use crate::theme::{
+    COLOR_ACCENT_GREEN, COLOR_ACCENT_GREEN_HOVER, COLOR_TEXT_BASE, COLOR_TEXT_SUBDUED,
+};
+use eframe::egui::{
+    self, Color32, CornerRadius, FontId, Pos2, Rect, Response, Sense, Stroke, Vec2,
+};
 use spoty_core::RepeatMode;
-use crate::theme::{COLOR_ACCENT_GREEN, COLOR_ACCENT_GREEN_HOVER, COLOR_TEXT_BASE, COLOR_TEXT_SUBDUED};
 
 /// Renders a circular Play/Pause button with Spotify-style hover scale
 pub fn play_circle_button(
@@ -165,16 +169,18 @@ pub fn prev_button(ui: &mut egui::Ui) -> Response {
         };
 
         // Draw bar on left + triangle pointing left
-        let bar_rect = Rect::from_center_size(
-            Pos2::new(center.x - 6.0, center.y),
-            Vec2::new(2.5, 12.0),
-        );
+        let bar_rect =
+            Rect::from_center_size(Pos2::new(center.x - 6.0, center.y), Vec2::new(2.5, 12.0));
         painter.rect_filled(bar_rect, CornerRadius::same(1), fg);
 
         let p1 = Pos2::new(center.x + 5.0, center.y - 6.0);
         let p2 = Pos2::new(center.x - 4.0, center.y);
         let p3 = Pos2::new(center.x + 5.0, center.y + 6.0);
-        painter.add(egui::Shape::convex_polygon(vec![p1, p2, p3], fg, Stroke::NONE));
+        painter.add(egui::Shape::convex_polygon(
+            vec![p1, p2, p3],
+            fg,
+            Stroke::NONE,
+        ));
     }
 
     response
@@ -199,12 +205,14 @@ pub fn next_button(ui: &mut egui::Ui) -> Response {
         let p1 = Pos2::new(center.x - 5.0, center.y - 6.0);
         let p2 = Pos2::new(center.x + 4.0, center.y);
         let p3 = Pos2::new(center.x - 5.0, center.y + 6.0);
-        painter.add(egui::Shape::convex_polygon(vec![p1, p2, p3], fg, Stroke::NONE));
+        painter.add(egui::Shape::convex_polygon(
+            vec![p1, p2, p3],
+            fg,
+            Stroke::NONE,
+        ));
 
-        let bar_rect = Rect::from_center_size(
-            Pos2::new(center.x + 6.0, center.y),
-            Vec2::new(2.5, 12.0),
-        );
+        let bar_rect =
+            Rect::from_center_size(Pos2::new(center.x + 6.0, center.y), Vec2::new(2.5, 12.0));
         painter.rect_filled(bar_rect, CornerRadius::same(1), fg);
     }
 

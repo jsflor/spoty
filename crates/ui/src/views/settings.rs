@@ -1,6 +1,6 @@
+use crate::config::SpotyConfig;
 use eframe::egui;
 use spoty_storage::{S3Config, SpotifyConfig, SubsonicConfig};
-use crate::config::SpotyConfig;
 
 pub struct SettingsView;
 
@@ -15,7 +15,12 @@ impl SettingsView {
         on_switch_to_subsonic: &mut impl FnMut(SubsonicConfig),
         on_switch_to_spotify: &mut impl FnMut(SpotifyConfig),
     ) {
-        ui.heading(egui::RichText::new("Settings & Storage Backends").size(26.0).strong().color(egui::Color32::WHITE));
+        ui.heading(
+            egui::RichText::new("Settings & Storage Backends")
+                .size(26.0)
+                .strong()
+                .color(egui::Color32::WHITE),
+        );
         ui.add_space(8.0);
         ui.label(egui::RichText::new("Configure your personal music sources across local drives, home servers, cloud storage, or Spotify.").color(egui::Color32::GRAY));
         ui.add_space(16.0);
@@ -27,7 +32,11 @@ impl SettingsView {
             .corner_radius(egui::CornerRadius::same(6))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Active Source:").strong().color(egui::Color32::WHITE));
+                    ui.label(
+                        egui::RichText::new("Active Source:")
+                            .strong()
+                            .color(egui::Color32::WHITE),
+                    );
                     ui.label(
                         egui::RichText::new(current_provider_name)
                             .strong()
@@ -72,8 +81,19 @@ impl SettingsView {
         // Section 2: S3-Compatible Cloud Storage (Cloudflare R2, AWS S3, MinIO)
         ui.group(|ui| {
             ui.set_width(ui.available_width());
-            ui.label(egui::RichText::new("2. S3 & Cloudflare R2 (OpenDAL)").size(16.0).strong().color(egui::Color32::WHITE));
-            ui.label(egui::RichText::new("Stream high-res audio directly from an S3-compatible cloud bucket").small().color(egui::Color32::GRAY));
+            ui.label(
+                egui::RichText::new("2. S3 & Cloudflare R2 (OpenDAL)")
+                    .size(16.0)
+                    .strong()
+                    .color(egui::Color32::WHITE),
+            );
+            ui.label(
+                egui::RichText::new(
+                    "Stream high-res audio directly from an S3-compatible cloud bucket",
+                )
+                .small()
+                .color(egui::Color32::GRAY),
+            );
             ui.add_space(8.0);
 
             egui::Grid::new("s3_settings_grid")
@@ -81,27 +101,57 @@ impl SettingsView {
                 .min_col_width(120.0)
                 .show(ui, |ui| {
                     ui.label("Bucket Name:");
-                    ui.add(egui::TextEdit::singleline(&mut config.s3.bucket).hint_text("my-music-bucket").desired_width(280.0));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut config.s3.bucket)
+                            .hint_text("my-music-bucket")
+                            .desired_width(280.0),
+                    );
                     ui.end_row();
 
                     ui.label("Endpoint (R2/S3):");
                     let mut ep = config.s3.endpoint.clone().unwrap_or_default();
-                    if ui.add(egui::TextEdit::singleline(&mut ep).hint_text("https://<account>.r2.cloudflarestorage.com").desired_width(280.0)).changed() {
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut ep)
+                                .hint_text("https://<account>.r2.cloudflarestorage.com")
+                                .desired_width(280.0),
+                        )
+                        .changed()
+                    {
                         config.s3.endpoint = if ep.is_empty() { None } else { Some(ep) };
                     }
                     ui.end_row();
 
                     ui.label("Access Key ID:");
                     let mut key = config.s3.access_key_id.clone().unwrap_or_default();
-                    if ui.add(egui::TextEdit::singleline(&mut key).hint_text("Optional access key").desired_width(280.0)).changed() {
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut key)
+                                .hint_text("Optional access key")
+                                .desired_width(280.0),
+                        )
+                        .changed()
+                    {
                         config.s3.access_key_id = if key.is_empty() { None } else { Some(key) };
                     }
                     ui.end_row();
 
                     ui.label("Secret Access Key:");
                     let mut secret = config.s3.secret_access_key.clone().unwrap_or_default();
-                    if ui.add(egui::TextEdit::singleline(&mut secret).password(true).hint_text("Optional secret key").desired_width(280.0)).changed() {
-                        config.s3.secret_access_key = if secret.is_empty() { None } else { Some(secret) };
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut secret)
+                                .password(true)
+                                .hint_text("Optional secret key")
+                                .desired_width(280.0),
+                        )
+                        .changed()
+                    {
+                        config.s3.secret_access_key = if secret.is_empty() {
+                            None
+                        } else {
+                            Some(secret)
+                        };
                     }
                     ui.end_row();
                 });

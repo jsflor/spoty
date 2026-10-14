@@ -1,10 +1,10 @@
-use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, Vec2};
-use spoty_core::{Playlist, Track};
-use spoty_storage::Library;
 use crate::navigation::Route;
 use crate::theme::{
     COLOR_ACCENT_GREEN, COLOR_BG_CARD, COLOR_BG_HIGHLIGHT, COLOR_TEXT_BASE, COLOR_TEXT_SUBDUED,
 };
+use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, Vec2};
+use spoty_core::{Playlist, Track};
+use spoty_storage::Library;
 
 pub struct HomeView;
 
@@ -33,13 +33,15 @@ impl HomeView {
         if !library.playlists.is_empty() {
             let available_w = ui.available_width();
             let num_cols = if available_w > 900.0 { 3 } else { 2 };
-            let card_w = ((available_w - ((num_cols - 1) as f32 * 12.0)) / num_cols as f32).max(220.0);
+            let card_w =
+                ((available_w - ((num_cols - 1) as f32 * 12.0)) / num_cols as f32).max(220.0);
 
             egui::Grid::new("quick_play_grid")
                 .spacing([12.0, 12.0])
                 .show(ui, |ui| {
                     for (i, playlist) in library.playlists.iter().enumerate() {
-                        let (rect, resp) = ui.allocate_exact_size(Vec2::new(card_w, 64.0), Sense::click());
+                        let (rect, resp) =
+                            ui.allocate_exact_size(Vec2::new(card_w, 64.0), Sense::click());
 
                         if ui.is_rect_visible(rect) {
                             let p = ui.painter();
@@ -58,12 +60,22 @@ impl HomeView {
                             if let Some(uri) = &playlist.cover_uri {
                                 let img = egui::Image::new(uri)
                                     .fit_to_exact_size(Vec2::splat(64.0))
-                                    .corner_radius(CornerRadius { nw: 6, sw: 6, ne: 0, se: 0 });
+                                    .corner_radius(CornerRadius {
+                                        nw: 6,
+                                        sw: 6,
+                                        ne: 0,
+                                        se: 0,
+                                    });
                                 img.paint_at(ui, cover_rect);
                             } else {
                                 p.rect_filled(
                                     cover_rect,
-                                    CornerRadius { nw: 6, sw: 6, ne: 0, se: 0 },
+                                    CornerRadius {
+                                        nw: 6,
+                                        sw: 6,
+                                        ne: 0,
+                                        se: 0,
+                                    },
                                     COLOR_BG_CARD,
                                 );
                                 p.text(
@@ -93,13 +105,21 @@ impl HomeView {
                                 let btn_center = Pos2::new(rect.max.x - 28.0, rect.center().y);
                                 let btn_radius = 18.0;
                                 p.circle_filled(btn_center, btn_radius, COLOR_ACCENT_GREEN);
-                                p.circle_stroke(btn_center, btn_radius, Stroke::new(1.0_f32, Color32::from_black_alpha(50)));
+                                p.circle_stroke(
+                                    btn_center,
+                                    btn_radius,
+                                    Stroke::new(1.0_f32, Color32::from_black_alpha(50)),
+                                );
 
                                 // Play triangle
                                 let p1 = Pos2::new(btn_center.x - 4.5, btn_center.y - 6.5);
                                 let p2 = Pos2::new(btn_center.x + 6.5, btn_center.y);
                                 let p3 = Pos2::new(btn_center.x - 4.5, btn_center.y + 6.5);
-                                p.add(egui::Shape::convex_polygon(vec![p1, p2, p3], Color32::BLACK, Stroke::NONE));
+                                p.add(egui::Shape::convex_polygon(
+                                    vec![p1, p2, p3],
+                                    Color32::BLACK,
+                                    Stroke::NONE,
+                                ));
                             }
                         }
 
@@ -169,7 +189,11 @@ impl HomeView {
                             .corner_radius(CornerRadius::same(6));
                         img.paint_at(ui, cover_rect);
                     } else {
-                        p.rect_filled(cover_rect, CornerRadius::same(6), Color32::from_rgb(0x24, 0x24, 0x24));
+                        p.rect_filled(
+                            cover_rect,
+                            CornerRadius::same(6),
+                            Color32::from_rgb(0x24, 0x24, 0x24),
+                        );
                         p.text(
                             cover_rect.center(),
                             egui::Align2::CENTER_CENTER,
@@ -181,15 +205,24 @@ impl HomeView {
 
                     // Floating Spotify green Play Circle Button on hover
                     if is_hovered {
-                        let btn_center = Pos2::new(cover_rect.max.x - 22.0, cover_rect.max.y - 22.0);
+                        let btn_center =
+                            Pos2::new(cover_rect.max.x - 22.0, cover_rect.max.y - 22.0);
                         let btn_radius = 20.0;
                         p.circle_filled(btn_center, btn_radius, COLOR_ACCENT_GREEN);
-                        p.circle_stroke(btn_center, btn_radius, Stroke::new(1.5_f32, Color32::from_black_alpha(40)));
+                        p.circle_stroke(
+                            btn_center,
+                            btn_radius,
+                            Stroke::new(1.5_f32, Color32::from_black_alpha(40)),
+                        );
 
                         let p1 = Pos2::new(btn_center.x - 5.0, btn_center.y - 7.0);
                         let p2 = Pos2::new(btn_center.x + 7.0, btn_center.y);
                         let p3 = Pos2::new(btn_center.x - 5.0, btn_center.y + 7.0);
-                        p.add(egui::Shape::convex_polygon(vec![p1, p2, p3], Color32::BLACK, Stroke::NONE));
+                        p.add(egui::Shape::convex_polygon(
+                            vec![p1, p2, p3],
+                            Color32::BLACK,
+                            Stroke::NONE,
+                        ));
                     }
 
                     // Track title

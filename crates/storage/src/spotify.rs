@@ -1,3 +1,4 @@
+use crate::provider::{AudioStream, Library, MusicProvider};
 use async_trait::async_trait;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -7,7 +8,6 @@ use std::io::{Cursor, Read};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
-use crate::provider::{AudioStream, Library, MusicProvider};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpotifyConfig {
@@ -105,10 +105,11 @@ impl MusicProvider for SpotifyProvider {
         }
 
         let token = self.get_access_token().await?;
-        let resp: serde_json::Value = ureq::get("https://api.spotify.com/v1/browse/featured-playlists?limit=10")
-            .set("Authorization", &format!("Bearer {}", token))
-            .call()?
-            .into_json()?;
+        let resp: serde_json::Value =
+            ureq::get("https://api.spotify.com/v1/browse/featured-playlists?limit=10")
+                .set("Authorization", &format!("Bearer {}", token))
+                .call()?
+                .into_json()?;
 
         let mut playlists = Vec::new();
         let mut tracks = Vec::new();
@@ -131,19 +132,25 @@ impl MusicProvider for SpotifyProvider {
         }
 
         // Fetch top hits to populate default library tracks
-        let hits_resp: serde_json::Value = ureq::get("https://api.spotify.com/v1/search?q=top&type=track&limit=25")
-            .set("Authorization", &format!("Bearer {}", token))
-            .call()?
-            .into_json()?;
+        let hits_resp: serde_json::Value =
+            ureq::get("https://api.spotify.com/v1/search?q=top&type=track&limit=25")
+                .set("Authorization", &format!("Bearer {}", token))
+                .call()?
+                .into_json()?;
 
         if let Some(items) = hits_resp["tracks"]["items"].as_array() {
             for item in items {
                 let sid = item["id"].as_str().unwrap_or("").to_string();
                 let title = item["name"].as_str().unwrap_or("Unknown").to_string();
-                let artist = item["artists"][0]["name"].as_str().unwrap_or("Unknown").to_string();
+                let artist = item["artists"][0]["name"]
+                    .as_str()
+                    .unwrap_or("Unknown")
+                    .to_string();
                 let album = item["album"]["name"].as_str().map(|s| s.to_string());
                 let duration_ms = item["duration_ms"].as_u64().unwrap_or(180000);
-                let cover = item["album"]["images"][0]["url"].as_str().map(|s| s.to_string());
+                let cover = item["album"]["images"][0]["url"]
+                    .as_str()
+                    .map(|s| s.to_string());
                 let preview_url = item["preview_url"].as_str().map(|s| s.to_string());
 
                 let track_id = TrackId::new(format!("spotify_{}", sid));
@@ -179,7 +186,10 @@ impl MusicProvider for SpotifyProvider {
     async fn search(&self, query: &str) -> anyhow::Result<Vec<Track>> {
         let token = self.get_access_token().await?;
         let encoded_q = query.replace(' ', "+");
-        let search_url = format!("https://api.spotify.com/v1/search?q={}&type=track&limit=20", encoded_q);
+        let search_url = format!(
+            "https://api.spotify.com/v1/search?q={}&type=track&limit=20",
+            encoded_q
+        );
 
         let resp: serde_json::Value = ureq::get(&search_url)
             .set("Authorization", &format!("Bearer {}", token))
@@ -191,10 +201,15 @@ impl MusicProvider for SpotifyProvider {
             for item in items {
                 let sid = item["id"].as_str().unwrap_or("").to_string();
                 let title = item["name"].as_str().unwrap_or("Unknown").to_string();
-                let artist = item["artists"][0]["name"].as_str().unwrap_or("Unknown").to_string();
+                let artist = item["artists"][0]["name"]
+                    .as_str()
+                    .unwrap_or("Unknown")
+                    .to_string();
                 let album = item["album"]["name"].as_str().map(|s| s.to_string());
                 let duration_ms = item["duration_ms"].as_u64().unwrap_or(180000);
-                let cover = item["album"]["images"][0]["url"].as_str().map(|s| s.to_string());
+                let cover = item["album"]["images"][0]["url"]
+                    .as_str()
+                    .map(|s| s.to_string());
                 let preview_url = item["preview_url"].as_str().map(|s| s.to_string());
 
                 let track_id = TrackId::new(format!("spotify_{}", sid));
@@ -221,9 +236,12 @@ impl MusicProvider for SpotifyProvider {
 
     async fn stream_track(&self, track_id: &TrackId) -> anyhow::Result<AudioStream> {
         let guard = self.stream_urls.read().await;
-        let url = guard
-            .get(track_id)
-            .ok_or_else(|| anyhow::anyhow!("Preview audio stream not available for Spotify track: {}", track_id))?;
+        let url = guard.get(track_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Preview audio stream not available for Spotify track: {}",
+                track_id
+            )
+        })?;
 
         let response = ureq::get(url).call()?;
         let mut bytes = Vec::new();
@@ -245,7 +263,12 @@ mod tests {
 
         assert!(header.starts_with("Basic "));
         let b64_part = header.trim_start_matches("Basic ");
-        let decoded = String::from_utf8(base64::engine::general_purpose::STANDARD.decode(b64_part).unwrap()).unwrap();
+        let decoded = String::from_utf8(
+            base64::engine::general_purpose::STANDARD
+                .decode(b64_part)
+                .unwrap(),
+        )
+        .unwrap();
         assert_eq!(decoded, "my_client_id:my_secret");
     }
 

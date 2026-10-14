@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::id::{AlbumId, ArtistId, PlaylistId, TrackId};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]

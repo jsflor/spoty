@@ -131,14 +131,17 @@ impl MusicProvider for OpenDalProvider {
                             .unwrap_or("Unknown Title");
 
                         // Read header or file bytes to extract real tags and picture
-                        let extracted = if let Ok(header) = self.operator.read_with(&path).range(0..128 * 1024).await {
+                        let extracted = if let Ok(header) =
+                            self.operator.read_with(&path).range(0..128 * 1024).await
+                        {
                             extract_audio_metadata(&header.to_vec(), filename)
                         } else {
                             extract_audio_metadata(&[], filename)
                         };
 
                         let cover_uri = extracted.cover_art.map(|img_bytes| {
-                            let encoded = base64::engine::general_purpose::STANDARD.encode(&img_bytes);
+                            let encoded =
+                                base64::engine::general_purpose::STANDARD.encode(&img_bytes);
                             format!("data:image/jpeg;base64,{}", encoded)
                         });
 

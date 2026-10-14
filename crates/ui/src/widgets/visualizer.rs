@@ -33,12 +33,14 @@ impl<'a> VisualizerWidget<'a> {
                 };
                 let y = rect.bottom() - height - 2.0;
 
-                let bar_rect = egui::Rect::from_min_size(
-                    egui::pos2(x, y),
-                    egui::vec2(bar_width, height),
-                );
+                let bar_rect =
+                    egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(bar_width, height));
 
-                let color = if self.is_playing { accent_color } else { idle_color };
+                let color = if self.is_playing {
+                    accent_color
+                } else {
+                    idle_color
+                };
                 painter.rect_filled(bar_rect, egui::CornerRadius::same(1), color);
             }
         }

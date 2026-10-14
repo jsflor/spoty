@@ -17,7 +17,11 @@ pub fn extract_audio_metadata(bytes: &[u8], fallback_filename: &str) -> Extracte
     // Attempt parsing with lofty
     let parsed = (|| -> Option<ExtractedMetadata> {
         let mut cursor = Cursor::new(bytes);
-        let tagged_file = Probe::new(&mut cursor).guess_file_type().ok()?.read().ok()?;
+        let tagged_file = Probe::new(&mut cursor)
+            .guess_file_type()
+            .ok()?
+            .read()
+            .ok()?;
 
         let properties = tagged_file.properties();
         let duration_secs = properties.duration().as_secs() as u32;
@@ -28,7 +32,10 @@ pub fn extract_audio_metadata(bytes: &[u8], fallback_filename: &str) -> Extracte
 
         if let Some(tag) = tag {
             let title = tag.title().map(|s| s.to_string()).filter(|s| !s.is_empty());
-            let artist = tag.artist().map(|s| s.to_string()).filter(|s| !s.is_empty());
+            let artist = tag
+                .artist()
+                .map(|s| s.to_string())
+                .filter(|s| !s.is_empty());
             let album = tag.album().map(|s| s.to_string()).filter(|s| !s.is_empty());
             let cover_art = tag.pictures().first().map(|p| p.data().to_vec());
 
@@ -38,7 +45,11 @@ pub fn extract_audio_metadata(bytes: &[u8], fallback_filename: &str) -> Extracte
                 title: title.unwrap_or(fb_title),
                 artist: artist.unwrap_or(fb_artist),
                 album,
-                duration_secs: if duration_secs > 0 { duration_secs } else { 180 },
+                duration_secs: if duration_secs > 0 {
+                    duration_secs
+                } else {
+                    180
+                },
                 cover_art,
             })
         } else {
@@ -47,7 +58,11 @@ pub fn extract_audio_metadata(bytes: &[u8], fallback_filename: &str) -> Extracte
                 title: fb_title,
                 artist: fb_artist,
                 album: None,
-                duration_secs: if duration_secs > 0 { duration_secs } else { 180 },
+                duration_secs: if duration_secs > 0 {
+                    duration_secs
+                } else {
+                    180
+                },
                 cover_art: None,
             })
         }

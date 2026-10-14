@@ -1,5 +1,5 @@
-use eframe::egui::{self, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, Vec2};
 use crate::theme::{COLOR_ACCENT_GREEN, COLOR_SLIDER_BG, COLOR_TEXT_BASE};
+use eframe::egui::{self, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, Vec2};
 
 pub struct SpotifySlider<'a> {
     value: &'a mut f64,
@@ -22,10 +22,13 @@ impl<'a> SpotifySlider<'a> {
     }
 
     pub fn show(self, ui: &mut egui::Ui) -> egui::Response {
-        let width = self.desired_width.unwrap_or_else(|| ui.available_width().max(40.0));
+        let width = self
+            .desired_width
+            .unwrap_or_else(|| ui.available_width().max(40.0));
         let height = 14.0; // Comfortable interaction height
 
-        let (rect, mut response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click_and_drag());
+        let (rect, mut response) =
+            ui.allocate_exact_size(Vec2::new(width, height), Sense::click_and_drag());
         let mut changed = false;
 
         let is_hovered = response.hovered() || response.dragged();
@@ -75,7 +78,11 @@ impl<'a> SpotifySlider<'a> {
                 let thumb_pos = Pos2::new(thumb_x, rect.center().y);
                 let thumb_radius = 5.5;
                 painter.circle_filled(thumb_pos, thumb_radius, Color32::WHITE);
-                painter.circle_stroke(thumb_pos, thumb_radius, Stroke::new(1.0_f32, Color32::from_black_alpha(40)));
+                painter.circle_stroke(
+                    thumb_pos,
+                    thumb_radius,
+                    Stroke::new(1.0_f32, Color32::from_black_alpha(40)),
+                );
             }
         }
 

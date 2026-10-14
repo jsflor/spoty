@@ -1,6 +1,6 @@
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::hash::Hash;
-use serde::{Deserialize, Serialize};
 
 macro_rules! define_id {
     ($name:ident, $prefix:expr) => {

@@ -1,10 +1,10 @@
+use crate::provider::{AudioStream, Library, MusicProvider};
 use async_trait::async_trait;
 use spoty_core::{
     Album, AlbumId, Artist, ArtistId, AudioFormat, Playlist, PlaylistId, Track, TrackId,
 };
 use std::collections::HashMap;
 use std::io::Cursor;
-use crate::provider::{AudioStream, Library, MusicProvider};
 
 pub struct DemoProvider {
     library: Library,
@@ -37,7 +37,10 @@ impl DemoProvider {
                 artist: "Synthwave Collective".into(),
                 album: Some("Midnight Drive".into()),
                 duration_secs: 5,
-                cover_uri: Some("https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=300&q=80".into()),
+                cover_uri: Some(
+                    "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=300&q=80"
+                        .into(),
+                ),
                 source_uri: "demo://track_1".into(),
                 format: AudioFormat::Wav,
             },
@@ -47,7 +50,10 @@ impl DemoProvider {
                 artist: "Lo-Fi Beats".into(),
                 album: Some("Study Sessions".into()),
                 duration_secs: 6,
-                cover_uri: Some("https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=300&q=80".into()),
+                cover_uri: Some(
+                    "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=300&q=80"
+                        .into(),
+                ),
                 source_uri: "demo://track_2".into(),
                 format: AudioFormat::Wav,
             },
@@ -57,7 +63,10 @@ impl DemoProvider {
                 artist: "Solaris".into(),
                 album: Some("Atmospheres".into()),
                 duration_secs: 4,
-                cover_uri: Some("https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=300&q=80".into()),
+                cover_uri: Some(
+                    "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=300&q=80"
+                        .into(),
+                ),
                 source_uri: "demo://track_3".into(),
                 format: AudioFormat::Wav,
             },
@@ -69,7 +78,10 @@ impl DemoProvider {
                 title: "Midnight Drive".into(),
                 artist: "Synthwave Collective".into(),
                 year: Some(2024),
-                cover_uri: Some("https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=300&q=80".into()),
+                cover_uri: Some(
+                    "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=300&q=80"
+                        .into(),
+                ),
                 track_ids: vec![track1_id.clone()],
             },
             Album {
@@ -77,7 +89,10 @@ impl DemoProvider {
                 title: "Study Sessions".into(),
                 artist: "Lo-Fi Beats".into(),
                 year: Some(2023),
-                cover_uri: Some("https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=300&q=80".into()),
+                cover_uri: Some(
+                    "https://images.unsplash.com/photo-1501386761578-eac5c94b800a?w=300&q=80"
+                        .into(),
+                ),
                 track_ids: vec![track2_id.clone()],
             },
         ];
@@ -100,15 +115,15 @@ impl DemoProvider {
             },
         ];
 
-        let playlists = vec![
-            Playlist {
-                id: PlaylistId::new("demo_playlist_favorites"),
-                title: "Spoty Favorites".into(),
-                description: Some("Curated showcase tracks for Spoty player".into()),
-                cover_uri: Some("https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&q=80".into()),
-                track_ids: vec![track1_id, track2_id, track3_id],
-            },
-        ];
+        let playlists = vec![Playlist {
+            id: PlaylistId::new("demo_playlist_favorites"),
+            title: "Spoty Favorites".into(),
+            description: Some("Curated showcase tracks for Spoty player".into()),
+            cover_uri: Some(
+                "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=300&q=80".into(),
+            ),
+            track_ids: vec![track1_id, track2_id, track3_id],
+        }];
 
         Self {
             library: Library {

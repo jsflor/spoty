@@ -1,9 +1,9 @@
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::{Arc, RwLock};
-use std::time::Duration;
-use spoty_core::{PlaybackState, Track};
 use crate::engine::{PlayerCommand, PlayerEvent};
 use crate::worker::AudioWorker;
+use spoty_core::{PlaybackState, Track};
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 #[derive(Clone)]
 pub struct PlayerController {
