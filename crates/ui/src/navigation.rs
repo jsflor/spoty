@@ -1,4 +1,4 @@
-use spoty_core::{AlbumId, PlaylistId};
+use spoty_core::{AlbumId, ArtistId, PlaylistId};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
@@ -7,8 +7,8 @@ pub enum Route {
     AllSongs,
     LikedSongs,
     Playlist(PlaylistId),
-    #[allow(dead_code)]
     Album(AlbumId),
+    Artist(ArtistId),
     Settings,
 }
 
@@ -105,5 +105,23 @@ mod tests {
         nav.push(Route::LikedSongs);
         assert_eq!(nav.current(), &Route::LikedSongs);
         assert!(nav.can_go_back());
+
+        nav.push(Route::Album(AlbumId::new("alb_discovery")));
+        assert_eq!(nav.current(), &Route::Album(AlbumId::new("alb_discovery")));
+
+        nav.push(Route::Artist(ArtistId::new("art_daft_punk")));
+        assert_eq!(
+            nav.current(),
+            &Route::Artist(ArtistId::new("art_daft_punk"))
+        );
+
+        nav.back();
+        assert_eq!(nav.current(), &Route::Album(AlbumId::new("alb_discovery")));
+
+        nav.back();
+        assert_eq!(nav.current(), &Route::LikedSongs);
+
+        nav.forward();
+        assert_eq!(nav.current(), &Route::Album(AlbumId::new("alb_discovery")));
     }
 }

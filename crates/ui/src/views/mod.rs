@@ -1,3 +1,5 @@
+pub mod album;
+pub mod artist;
 pub mod context;
 pub mod home;
 pub mod playlist;
@@ -5,6 +7,8 @@ pub mod search;
 pub mod settings;
 pub mod songs;
 
+pub use album::AlbumView;
+pub use artist::ArtistView;
 pub use context::{ViewAction, ViewContext};
 pub use home::HomeView;
 pub use playlist::PlaylistView;

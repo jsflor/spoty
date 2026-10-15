@@ -505,6 +505,11 @@ impl HomeView {
                                 );
                             }
 
+                            if resp.clicked() {
+                                action =
+                                    Some(ViewAction::Navigate(Route::Artist(artist.id.clone())));
+                            }
+
                             ui.add_space(14.0);
                         }
                     });

@@ -55,3 +55,11 @@ The UI SHALL provide a context menu on track rows and cards across all views wit
 - **GIVEN** a track visible in Search, Songs, or Home view
 - **WHEN** the user right-clicks the track and selects a playlist under "Add to Playlist"
 - **THEN** the track is appended to the custom playlist in SQLite and reflected immediately in the library
+
+### Requirement: Interactive Entity Links in Track Tables
+The UI SHALL render artist and album names within track table rows as interactive text links that highlight on hover and navigate to their respective views upon click.
+
+#### Scenario: Clicking artist name in playlist table
+- **WHEN** user clicks on the artist name of a track in a playlist or search table
+- **THEN** the view navigates to `Route::Artist` for that artist
+

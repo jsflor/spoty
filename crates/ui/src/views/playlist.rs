@@ -1,3 +1,4 @@
+use crate::navigation::Route;
 use crate::theme::{
     COLOR_ACCENT_GREEN, COLOR_BG_CARD, COLOR_BG_HIGHLIGHT, COLOR_DIVIDER, COLOR_TEXT_BASE,
     COLOR_TEXT_SUBDUED,
@@ -5,7 +6,7 @@ use crate::theme::{
 use crate::views::{ViewAction, ViewContext};
 use crate::widgets::{draw_close_icon, play_circle_button, render_track_context_menu};
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, Vec2};
-use spoty_core::{PlaylistId, Track};
+use spoty_core::{AlbumId, ArtistId, PlaylistId, Track};
 
 pub struct PlaylistView;
 
@@ -229,6 +230,53 @@ impl PlaylistView {
             let (row_rect, row_resp) =
                 ui.allocate_exact_size(Vec2::new(table_width, row_height), Sense::click());
 
+            let (artist_galley, artist_rect) = {
+                let p = ui.painter();
+                let galley = p.layout_no_wrap(
+                    track.artist.clone(),
+                    FontId::proportional(12.0_f32),
+                    COLOR_TEXT_SUBDUED,
+                );
+                let pos = Pos2::new(row_rect.left() + 86.0, row_rect.min.y + 32.0);
+                let rect = Rect::from_min_size(pos, galley.size());
+                (galley, rect)
+            };
+            let artist_resp = ui.allocate_rect(artist_rect, Sense::click());
+
+            let maybe_album_data = track.album.as_ref().map(|album_name| {
+                let p = ui.painter();
+                let galley = p.layout_no_wrap(
+                    album_name.clone(),
+                    FontId::proportional(13.0_f32),
+                    COLOR_TEXT_SUBDUED,
+                );
+                let album_x = row_rect.left() + (table_width * 0.52);
+                let pos = Pos2::new(album_x, row_rect.center().y - (galley.size().y / 2.0));
+                let rect = Rect::from_min_size(pos, galley.size());
+                (galley, rect)
+            });
+            let maybe_album_resp = maybe_album_data
+                .as_ref()
+                .map(|(_, rect)| ui.allocate_rect(*rect, Sense::click()));
+
+            let remove_rect = Rect::from_center_size(
+                Pos2::new(row_rect.right() - 104.0, row_rect.center().y),
+                Vec2::splat(22.0),
+            );
+            let remove_resp = if is_custom {
+                Some(ui.allocate_rect(remove_rect, Sense::click()))
+            } else {
+                None
+            };
+
+            let heart_rect = Rect::from_center_size(
+                Pos2::new(row_rect.right() - 74.0, row_rect.center().y),
+                Vec2::splat(24.0),
+            );
+            let heart_resp = ui.allocate_rect(heart_rect, Sense::click());
+
+            let fav = (ctx.is_favorite)(&track.id);
+
             if ui.is_rect_visible(row_rect) {
                 let p = ui.painter();
                 let is_hovered = row_resp.hovered();
@@ -287,37 +335,97 @@ impl PlaylistView {
                     );
                 }
 
-                // Title & Artist
+                // Title
                 let title_col = if is_current {
                     COLOR_ACCENT_GREEN
                 } else {
                     COLOR_TEXT_BASE
                 };
                 p.text(
-                    Pos2::new(row_rect.left() + 86.0, row_rect.min.y + 16.0),
+                    Pos2::new(row_rect.left() + 86.0, row_rect.min.y + 14.0),
                     egui::Align2::LEFT_TOP,
                     &track.title,
                     FontId::proportional(14.0),
                     title_col,
                 );
-                p.text(
-                    Pos2::new(row_rect.left() + 86.0, row_rect.min.y + 32.0),
-                    egui::Align2::LEFT_TOP,
-                    &track.artist,
-                    FontId::proportional(12.0),
-                    COLOR_TEXT_SUBDUED,
-                );
 
-                // Album
-                let album_x = row_rect.left() + (table_width * 0.52);
-                let album_name = track.album.as_deref().unwrap_or("-");
-                p.text(
-                    Pos2::new(album_x, row_rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    album_name,
-                    FontId::proportional(13.0),
-                    COLOR_TEXT_SUBDUED,
-                );
+                // Clickable Artist Link underneath
+                let artist_hovered = artist_resp.hovered();
+                let artist_col = if artist_hovered {
+                    COLOR_TEXT_BASE
+                } else {
+                    COLOR_TEXT_SUBDUED
+                };
+                p.galley(artist_rect.min, artist_galley, artist_col);
+                if artist_hovered {
+                    p.line_segment(
+                        [
+                            Pos2::new(artist_rect.left(), artist_rect.bottom()),
+                            Pos2::new(artist_rect.right(), artist_rect.bottom()),
+                        ],
+                        Stroke::new(1.0_f32, artist_col),
+                    );
+                }
+
+                // Clickable Album
+                if let (Some((galley, rect)), Some(resp)) = (&maybe_album_data, &maybe_album_resp) {
+                    let album_hovered = resp.hovered();
+                    let album_col = if album_hovered {
+                        COLOR_TEXT_BASE
+                    } else {
+                        COLOR_TEXT_SUBDUED
+                    };
+                    p.galley(rect.min, galley.clone(), album_col);
+                    if album_hovered {
+                        p.line_segment(
+                            [
+                                Pos2::new(rect.left(), rect.bottom()),
+                                Pos2::new(rect.right(), rect.bottom()),
+                            ],
+                            Stroke::new(1.0_f32, album_col),
+                        );
+                    }
+                } else {
+                    let album_x = row_rect.left() + (table_width * 0.52);
+                    p.text(
+                        Pos2::new(album_x, row_rect.center().y),
+                        egui::Align2::LEFT_CENTER,
+                        "-",
+                        FontId::proportional(13.0),
+                        COLOR_TEXT_SUBDUED,
+                    );
+                }
+
+                // Remove button for custom playlists
+                if let Some(r_resp) = &remove_resp {
+                    if is_hovered || r_resp.hovered() {
+                        let col = if r_resp.hovered() {
+                            Color32::from_rgb(0xff, 0x60, 0x60)
+                        } else {
+                            COLOR_TEXT_SUBDUED
+                        };
+                        draw_close_icon(p, remove_rect.center(), 9.0, 1.4, col);
+                    }
+                }
+
+                // Interactive Heart Button on the right
+                let heart_col = if fav {
+                    COLOR_ACCENT_GREEN
+                } else if heart_resp.hovered() {
+                    COLOR_TEXT_BASE
+                } else {
+                    Color32::TRANSPARENT
+                };
+                if fav || heart_resp.hovered() || is_hovered {
+                    let heart_text = if fav { "♥" } else { "♡" };
+                    p.text(
+                        heart_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        heart_text,
+                        FontId::proportional(16.0),
+                        heart_col,
+                    );
+                }
 
                 // Duration
                 p.text(
@@ -328,12 +436,6 @@ impl PlaylistView {
                     COLOR_TEXT_SUBDUED,
                 );
             }
-
-            if row_resp.clicked() {
-                action = Some(ViewAction::PlayTrack(track.clone()));
-            }
-
-            let fav = (ctx.is_favorite)(&track.id);
 
             row_resp.context_menu(|ui| {
                 if let Some(act) = render_track_context_menu(
@@ -347,62 +449,56 @@ impl PlaylistView {
                 }
             });
 
-            // Remove button for custom playlists
-            if is_custom {
-                let remove_rect = Rect::from_center_size(
-                    Pos2::new(row_rect.right() - 104.0, row_rect.center().y),
-                    Vec2::splat(22.0),
-                );
-                let remove_resp = ui.allocate_rect(remove_rect, Sense::click());
-                if ui.is_rect_visible(remove_rect) && (row_resp.hovered() || remove_resp.hovered())
-                {
-                    let p = ui.painter();
-                    let col = if remove_resp.hovered() {
-                        Color32::from_rgb(0xff, 0x60, 0x60)
-                    } else {
-                        COLOR_TEXT_SUBDUED
-                    };
-                    draw_close_icon(p, remove_rect.center(), 9.0, 1.4, col);
-                }
-                if remove_resp
-                    .on_hover_text("Remove from this playlist")
-                    .clicked()
-                {
-                    action = Some(ViewAction::RemoveTrackFromPlaylist(
-                        playlist.id.clone(),
-                        track.id.clone(),
-                    ));
-                }
-            }
+            let artist_clicked = artist_resp.clicked();
+            let album_clicked = maybe_album_resp
+                .as_ref()
+                .map(|r| r.clicked())
+                .unwrap_or(false);
+            let remove_clicked = remove_resp.as_ref().map(|r| r.clicked()).unwrap_or(false);
 
-            // Interactive Heart Button on the right
-            let heart_rect = Rect::from_center_size(
-                Pos2::new(row_rect.right() - 74.0, row_rect.center().y),
-                Vec2::splat(24.0),
-            );
-            let heart_resp = ui.allocate_rect(heart_rect, Sense::click());
-            if ui.is_rect_visible(heart_rect) {
-                let p = ui.painter();
-                let heart_col = if fav {
-                    COLOR_ACCENT_GREEN
-                } else if heart_resp.hovered() {
-                    COLOR_TEXT_BASE
-                } else {
-                    Color32::TRANSPARENT
-                };
-                if fav || heart_resp.hovered() || row_resp.hovered() {
-                    let heart_text = if fav { "♥" } else { "♡" };
-                    p.text(
-                        heart_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        heart_text,
-                        FontId::proportional(16.0),
-                        heart_col,
-                    );
+            if artist_clicked {
+                let artist_id = ctx
+                    .library
+                    .artists
+                    .iter()
+                    .find(|a| a.name.eq_ignore_ascii_case(&track.artist))
+                    .map(|a| a.id.clone())
+                    .unwrap_or_else(|| {
+                        let slug = track
+                            .artist
+                            .to_lowercase()
+                            .replace(|c: char| !c.is_alphanumeric(), "_");
+                        ArtistId::new(format!("art_{slug}"))
+                    });
+                action = Some(ViewAction::Navigate(Route::Artist(artist_id)));
+            } else if album_clicked {
+                if let Some(alb_name) = &track.album {
+                    let album_id = ctx
+                        .library
+                        .albums
+                        .iter()
+                        .find(|a| {
+                            a.title.eq_ignore_ascii_case(alb_name)
+                                && a.artist.eq_ignore_ascii_case(&track.artist)
+                        })
+                        .map(|a| a.id.clone())
+                        .unwrap_or_else(|| {
+                            let slug = alb_name
+                                .to_lowercase()
+                                .replace(|c: char| !c.is_alphanumeric(), "_");
+                            AlbumId::new(format!("alb_{slug}"))
+                        });
+                    action = Some(ViewAction::Navigate(Route::Album(album_id)));
                 }
-            }
-            if heart_resp.clicked() {
+            } else if remove_clicked {
+                action = Some(ViewAction::RemoveTrackFromPlaylist(
+                    playlist.id.clone(),
+                    track.id.clone(),
+                ));
+            } else if heart_resp.clicked() {
                 action = Some(ViewAction::ToggleFavorite(track.id.clone()));
+            } else if row_resp.clicked() {
+                action = Some(ViewAction::PlayTrack(track.clone()));
             }
 
             ui.add_space(2.0);

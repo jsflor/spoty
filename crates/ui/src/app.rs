@@ -18,7 +18,8 @@ use crate::theme::{
     COLOR_CANVAS, COLOR_DIVIDER, COLOR_TEXT_BASE, COLOR_TEXT_SUBDUED,
 };
 use crate::views::{
-    HomeView, PlaylistView, SearchView, SettingsView, SongsMode, SongsView, ViewAction, ViewContext,
+    AlbumView, ArtistView, HomeView, PlaylistView, SearchView, SettingsView, SongsMode, SongsView,
+    ViewAction, ViewContext,
 };
 use crate::widgets::{
     SpotifySlider, VisualizerWidget, draw_close_icon, draw_home_icon, draw_plus_icon, heart_button,
@@ -1152,6 +1153,10 @@ impl eframe::App for SpotyApp {
                                             COLOR_TEXT_BASE,
                                         );
                                     }
+
+                                    if resp.clicked() {
+                                        self.nav.push(Route::Artist(artist.id.clone()));
+                                    }
                                 }
                             }
                         });
@@ -1544,9 +1549,9 @@ impl eframe::App for SpotyApp {
                                 Route::Playlist(playlist_id) => {
                                     PlaylistView::show(ui, &view_ctx, &playlist_id)
                                 }
-                                Route::Album(_) => {
-                                    ui.label("Album view");
-                                    None
+                                Route::Album(album_id) => AlbumView::show(ui, &view_ctx, &album_id),
+                                Route::Artist(artist_id) => {
+                                    ArtistView::show(ui, &view_ctx, &artist_id)
                                 }
                                 Route::Settings => {
                                     let provider_name = self.provider.display_name().to_string();
