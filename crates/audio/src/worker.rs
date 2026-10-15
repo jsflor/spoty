@@ -9,6 +9,7 @@ pub struct AudioWorker {
     cmd_rx: Receiver<PlayerCommand>,
     event_tx: Sender<PlayerEvent>,
     state: PlaybackState,
+    previous_volume: f32,
 }
 
 impl AudioWorker {
@@ -23,6 +24,7 @@ impl AudioWorker {
                     cmd_rx,
                     event_tx,
                     state: PlaybackState::default(),
+                    previous_volume: 0.8,
                 };
                 worker.run();
             })
@@ -107,19 +109,37 @@ impl AudioWorker {
                     PlayerCommand::SetVolume(vol) => {
                         let clamped = vol.clamp(0.0, 1.0);
                         self.state.volume = clamped;
+                        if clamped > 0.0 {
+                            self.state.is_muted = false;
+                            self.previous_volume = clamped;
+                        }
                         if let Some(sink) = &sink_opt {
                             sink.set_volume(if self.state.is_muted { 0.0 } else { clamped });
                         }
                         self.emit_state();
                     }
                     PlayerCommand::ToggleMute => {
-                        self.state.is_muted = !self.state.is_muted;
-                        if let Some(sink) = &sink_opt {
-                            sink.set_volume(if self.state.is_muted {
-                                0.0
+                        if !self.state.is_muted {
+                            // Muting
+                            if self.state.volume > 0.05 {
+                                self.previous_volume = self.state.volume;
+                            }
+                            self.state.is_muted = true;
+                            if let Some(sink) = &sink_opt {
+                                sink.set_volume(0.0);
+                            }
+                        } else {
+                            // Unmuting
+                            self.state.is_muted = false;
+                            let restored = if self.previous_volume > 0.05 {
+                                self.previous_volume
                             } else {
-                                self.state.volume
-                            });
+                                0.5
+                            };
+                            self.state.volume = restored;
+                            if let Some(sink) = &sink_opt {
+                                sink.set_volume(restored);
+                            }
                         }
                         self.emit_state();
                     }

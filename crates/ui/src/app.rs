@@ -640,6 +640,7 @@ impl eframe::App for SpotyApp {
 
                                 if SpotifySlider::new(&mut pos, max_duration)
                                     .width(slider_w)
+                                    .tooltip_time()
                                     .show(ui)
                                     .changed()
                                 {
@@ -666,6 +667,7 @@ impl eframe::App for SpotyApp {
                             let mut vol_f64 = state.volume as f64;
                             if SpotifySlider::new(&mut vol_f64, 1.0)
                                 .width(85.0)
+                                .tooltip_percent()
                                 .show(ui)
                                 .changed()
                             {
