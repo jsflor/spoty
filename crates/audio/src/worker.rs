@@ -1,6 +1,7 @@
 use crate::engine::{PlayerCommand, PlayerEvent};
+use crate::reader::AudioStreamReader;
 use rodio::{Decoder, OutputStream, Sink, Source};
-use spoty_core::{PlaybackState, PlaybackStatus, RepeatMode};
+use spoty_core::{PlaybackState, PlaybackStatus, RepeatMode, Track};
 use std::io::Cursor;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
@@ -93,6 +94,7 @@ impl AudioWorker {
                         if let Some(handle) = &stream_handle {
                             sink_opt = Sink::try_new(handle).ok();
                         }
+                        current_bytes = None;
                         self.state.status = PlaybackStatus::Stopped;
                         self.state.position_secs = 0.0;
                         self.emit_state();
@@ -153,7 +155,6 @@ impl AudioWorker {
                     }
                     PlayerCommand::ToggleMute => {
                         if !self.state.is_muted {
-                            // Muting
                             if self.state.volume > 0.05 {
                                 self.previous_volume = self.state.volume;
                             }
@@ -162,7 +163,6 @@ impl AudioWorker {
                                 sink.set_volume(0.0);
                             }
                         } else {
-                            // Unmuting
                             self.state.is_muted = false;
                             let restored = if self.previous_volume > 0.05 {
                                 self.previous_volume
@@ -189,41 +189,31 @@ impl AudioWorker {
                         self.emit_state();
                     }
                     PlayerCommand::LoadTrack { track, audio_bytes } => {
-                        if let Some(handle) = &stream_handle {
-                            match Sink::try_new(handle) {
-                                Ok(new_sink) => {
-                                    let cursor = Cursor::new(audio_bytes.clone());
-                                    match Decoder::new(cursor) {
-                                        Ok(decoder) => {
-                                            new_sink.append(decoder);
-                                            new_sink.set_volume(if self.state.is_muted {
-                                                0.0
-                                            } else {
-                                                self.state.volume
-                                            });
-                                            new_sink.play();
-                                            sink_opt = Some(new_sink);
-                                        }
-                                        Err(e) => {
-                                            let err_msg = format!("Failed to decode audio: {}", e);
-                                            tracing::error!("{}", err_msg);
-                                            let _ = self.event_tx.send(PlayerEvent::Error(err_msg));
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::error!("Failed to create audio sink: {}", e);
-                                }
-                            }
-                        }
-
-                        current_bytes = Some(audio_bytes);
-                        self.state.duration_secs = track.duration_secs as f64;
-                        self.state.position_secs = 0.0;
-                        self.state.status = PlaybackStatus::Playing;
-                        self.state.current_track = Some(track);
+                        current_bytes = Some(audio_bytes.clone());
+                        let stream = Box::new(Cursor::new(audio_bytes));
+                        self.load_stream_internal(
+                            stream_handle.as_ref(),
+                            &mut sink_opt,
+                            track,
+                            stream,
+                            Duration::ZERO,
+                        );
                         last_tick = Instant::now();
-                        self.emit_state();
+                    }
+                    PlayerCommand::LoadStream {
+                        track,
+                        stream,
+                        start_position,
+                    } => {
+                        current_bytes = None;
+                        self.load_stream_internal(
+                            stream_handle.as_ref(),
+                            &mut sink_opt,
+                            track,
+                            stream,
+                            start_position,
+                        );
+                        last_tick = Instant::now();
                     }
                 },
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
@@ -247,38 +237,33 @@ impl AudioWorker {
                         && self.state.position_secs >= self.state.duration_secs
                 };
 
-                if is_finished {
-                    if let Some(track) = self.state.current_track.clone() {
-                        let _ = self.event_tx.send(PlayerEvent::TrackEnded(track.clone()));
+                if is_finished && let Some(track) = self.state.current_track.clone() {
+                    let _ = self.event_tx.send(PlayerEvent::TrackEnded(track.clone()));
 
-                        match self.state.repeat_mode {
-                            RepeatMode::One => {
-                                if let (Some(handle), Some(bytes)) =
-                                    (&stream_handle, &current_bytes)
-                                {
-                                    if let Ok(new_sink) = Sink::try_new(handle) {
-                                        let cursor = Cursor::new(bytes.clone());
-                                        if let Ok(decoder) = Decoder::new(cursor) {
-                                            new_sink.append(decoder);
-                                            new_sink.set_volume(if self.state.is_muted {
-                                                0.0
-                                            } else {
-                                                self.state.volume
-                                            });
-                                            new_sink.play();
-                                            sink_opt = Some(new_sink);
-                                        }
+                    match self.state.repeat_mode {
+                        RepeatMode::One => {
+                            if let (Some(handle), Some(bytes)) = (&stream_handle, &current_bytes) {
+                                if let Ok(new_sink) = Sink::try_new(handle) {
+                                    let cursor = Cursor::new(bytes.clone());
+                                    if let Ok(decoder) = Decoder::new(cursor) {
+                                        new_sink.append(decoder);
+                                        new_sink.set_volume(if self.state.is_muted {
+                                            0.0
+                                        } else {
+                                            self.state.volume
+                                        });
+                                        new_sink.play();
+                                        sink_opt = Some(new_sink);
                                     }
-                                    self.state.position_secs = 0.0;
-                                    self.state.status = PlaybackStatus::Playing;
                                 }
-                            }
-                            _ => {
-                                self.state.status = PlaybackStatus::Stopped;
                                 self.state.position_secs = 0.0;
-                                let _ =
-                                    self.event_tx.send(PlayerEvent::VisualizerLevels([0.0; 16]));
+                                self.state.status = PlaybackStatus::Playing;
                             }
+                        }
+                        _ => {
+                            self.state.status = PlaybackStatus::Stopped;
+                            self.state.position_secs = 0.0;
+                            let _ = self.event_tx.send(PlayerEvent::VisualizerLevels([0.0; 16]));
                         }
                     }
                 }
@@ -311,6 +296,51 @@ impl AudioWorker {
         }
 
         drop(stream);
+    }
+
+    fn load_stream_internal(
+        &mut self,
+        stream_handle: Option<&rodio::OutputStreamHandle>,
+        sink_opt: &mut Option<Sink>,
+        track: Track,
+        stream: Box<dyn AudioStreamReader>,
+        start_position: Duration,
+    ) {
+        if let Some(handle) = stream_handle {
+            match Sink::try_new(handle) {
+                Ok(new_sink) => match Decoder::new(stream) {
+                    Ok(decoder) => {
+                        if start_position > Duration::ZERO {
+                            let skipped = decoder.skip_duration(start_position);
+                            new_sink.append(skipped);
+                        } else {
+                            new_sink.append(decoder);
+                        }
+                        new_sink.set_volume(if self.state.is_muted {
+                            0.0
+                        } else {
+                            self.state.volume
+                        });
+                        new_sink.play();
+                        *sink_opt = Some(new_sink);
+                    }
+                    Err(e) => {
+                        let err_msg = format!("Failed to decode audio: {}", e);
+                        tracing::error!("{}", err_msg);
+                        let _ = self.event_tx.send(PlayerEvent::Error(err_msg));
+                    }
+                },
+                Err(e) => {
+                    tracing::error!("Failed to create audio sink: {}", e);
+                }
+            }
+        }
+
+        self.state.duration_secs = track.duration_secs as f64;
+        self.state.position_secs = start_position.as_secs_f64();
+        self.state.status = PlaybackStatus::Playing;
+        self.state.current_track = Some(track);
+        self.emit_state();
     }
 
     fn emit_state(&self) {

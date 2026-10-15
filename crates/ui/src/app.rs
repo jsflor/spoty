@@ -1,5 +1,7 @@
 use eframe::egui;
-use spoty_audio::{PlayerController, PlayerEvent};
+use spoty_audio::{
+    AudioStreamReader, AudioStreamResolver, BoundedStreamReader, PlaybackSession, SessionEvent,
+};
 use spoty_core::{PlaybackStatus, Playlist, PlaylistId, Queue, Track};
 use spoty_storage::{
     DemoProvider, Library, LibraryDatabase, MusicProvider, OpenDalProvider, S3Config,
@@ -8,7 +10,6 @@ use spoty_storage::{
 use std::sync::Arc;
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
-use tokio::io::AsyncReadExt;
 
 use crate::config::{ProviderType, SpotyConfig};
 use crate::navigation::{NavigationHistory, Route};
@@ -22,6 +23,20 @@ use crate::widgets::{
     next_button, play_circle_button, prev_button, queue_button, repeat_button, shuffle_button,
     speaker_button,
 };
+
+struct AppAudioResolver {
+    provider: Arc<dyn MusicProvider>,
+    tokio_rt: Arc<tokio::runtime::Runtime>,
+}
+
+impl AudioStreamResolver for AppAudioResolver {
+    fn resolve_stream(&self, track: &Track) -> anyhow::Result<Box<dyn AudioStreamReader>> {
+        let stream = self
+            .tokio_rt
+            .block_on(self.provider.stream_track(&track.id))?;
+        Ok(BoundedStreamReader::from_async_read(stream, &self.tokio_rt))
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarCategory {
@@ -39,11 +54,10 @@ pub struct PlaylistEditModal {
 pub struct SpotyApp {
     library: Library,
     provider: Arc<dyn MusicProvider>,
-    controller: PlayerController,
-    event_rx: Receiver<PlayerEvent>,
+    session: PlaybackSession,
+    event_rx: Receiver<SessionEvent>,
     tokio_rt: Arc<tokio::runtime::Runtime>,
     nav: NavigationHistory,
-    queue: Queue,
     config: SpotyConfig,
     db: LibraryDatabase,
     search_query: String,
@@ -108,17 +122,20 @@ impl SpotyApp {
             }
         }
 
-        let (controller, event_rx) = PlayerController::new();
+        let resolver = Arc::new(AppAudioResolver {
+            provider: Arc::clone(&provider),
+            tokio_rt: Arc::clone(&tokio_rt),
+        });
         let queue = Queue::with_tracks(library.tracks.clone(), None);
+        let (session, event_rx) = PlaybackSession::with_queue(resolver, queue);
 
         Self {
             library,
             provider,
-            controller,
+            session,
             event_rx,
             tokio_rt,
             nav: NavigationHistory::new(),
-            queue,
             config,
             db,
             search_query: String::new(),
@@ -132,58 +149,32 @@ impl SpotyApp {
     }
 
     fn play_track(&mut self, track: Track) {
-        if let Some(pos) = self.queue.tracks().iter().position(|t| t.id == track.id) {
-            self.queue.jump_to(pos);
-        }
-
-        let provider = self.provider.clone();
-        let controller = self.controller.clone();
-        let track_clone = track.clone();
-
-        self.tokio_rt.spawn(async move {
-            match provider.stream_track(&track_clone.id).await {
-                Ok(mut stream) => {
-                    let mut bytes = Vec::new();
-                    if let Ok(_) = stream.read_to_end(&mut bytes).await {
-                        controller.load_track(track_clone, bytes);
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("Failed to stream track: {}", e);
-                }
-            }
-        });
+        self.session.play_track(track.id);
     }
 
     fn play_next(&mut self) {
-        let repeat = self.controller.state().repeat_mode;
-        if let Some(next_track) = self.queue.next(repeat).cloned() {
-            self.play_track(next_track);
-        }
+        self.session.next();
     }
 
     fn play_prev(&mut self) {
-        let state = self.controller.state();
-        if state.position_secs > 3.0 {
-            self.controller.seek(Duration::ZERO);
-        } else if let Some(prev_track) = self.queue.prev().cloned() {
-            self.play_track(prev_track);
-        }
+        self.session.prev();
     }
 
     fn play_all_tracks(&mut self, tracks: Vec<Track>) {
-        if let Some(first) = tracks.first().cloned() {
-            self.queue.set_tracks(tracks, Some(0));
-            self.play_track(first);
-        }
+        self.session.play_all(tracks, 0);
     }
 
     fn switch_provider(&mut self, provider: Arc<dyn MusicProvider>, p_type: ProviderType) {
         if let Ok(new_lib) = self.tokio_rt.block_on(provider.fetch_library()) {
             let _ = self.db.upsert_tracks(&new_lib.tracks);
-            self.provider = provider;
+            self.provider = Arc::clone(&provider);
             self.library = new_lib.clone();
-            self.queue.set_tracks(new_lib.tracks, None);
+            let new_resolver = Arc::new(AppAudioResolver {
+                provider,
+                tokio_rt: Arc::clone(&self.tokio_rt),
+            });
+            self.session.set_resolver(new_resolver);
+            self.session.set_queue(new_lib.tracks, None);
             self.config.active_provider = p_type;
             let _ = self.config.save();
             self.nav.push(Route::Home);
@@ -281,20 +272,19 @@ impl SpotyApp {
             }
         });
 
+        let state = self.session.state();
+
         if toggle_play {
-            self.controller.toggle_play_pause();
+            self.session.toggle_play_pause();
         }
         if toggle_mute {
-            self.controller.toggle_mute();
+            self.session.toggle_mute();
         }
         if toggle_shuffle {
-            let is_shuf = self.queue.toggle_shuffle();
-            if is_shuf != self.controller.state().is_shuffle {
-                self.controller.toggle_shuffle();
-            }
+            self.session.toggle_shuffle();
         }
         if cycle_repeat {
-            self.controller.cycle_repeat_mode();
+            self.session.cycle_repeat_mode();
         }
         if next_track {
             self.play_next();
@@ -303,14 +293,14 @@ impl SpotyApp {
             self.play_prev();
         }
         if let Some(delta) = seek_delta {
-            let current = self.controller.state().position_secs;
-            let target = (current + delta).clamp(0.0, self.controller.state().duration_secs);
-            self.controller.seek(Duration::from_secs_f64(target));
+            let current = state.playback.position_secs;
+            let target = (current + delta).clamp(0.0, state.playback.duration_secs);
+            self.session.seek(Duration::from_secs_f64(target));
         }
         if let Some(delta) = vol_delta {
-            let current = self.controller.state().volume;
+            let current = state.playback.volume;
             let target = (current + delta).clamp(0.0, 1.0);
-            self.controller.set_volume(target);
+            self.session.set_volume(target);
         }
     }
 }
@@ -321,25 +311,21 @@ impl eframe::App for SpotyApp {
 
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
-                PlayerEvent::StateChanged(state) => {
-                    self.controller.update_cached_state(state);
+                SessionEvent::StateChanged(_) => {
                     ctx.request_repaint();
                 }
-                PlayerEvent::VisualizerLevels(levels) => {
+                SessionEvent::VisualizerLevels(levels) => {
                     self.visualizer_levels = levels;
                     ctx.request_repaint();
                 }
-                PlayerEvent::TrackEnded(_) => {
-                    self.play_next();
-                }
-                PlayerEvent::Error(err) => {
+                SessionEvent::Error(err) => {
                     tracing::error!("Audio error: {}", err);
                 }
             }
         }
 
-        let state = self.controller.state();
-        let is_playing = state.status == PlaybackStatus::Playing;
+        let state = self.session.state();
+        let is_playing = state.playback.status == PlaybackStatus::Playing;
 
         if is_playing || self.scrubbing_position.is_some() {
             ctx.request_repaint_after(Duration::from_millis(16));
@@ -584,15 +570,15 @@ impl eframe::App for SpotyApp {
                         |ui| {
                             // Top: Controls
                             ui.horizontal(|ui| {
-                                let is_shuf = self.queue.is_shuffle();
-                                if shuffle_button(ui, is_shuf)
-                                    .on_hover_text("Enable Shuffle")
+                                if shuffle_button(ui, state.is_shuffle)
+                                    .on_hover_text(if state.is_shuffle {
+                                        "Disable Shuffle"
+                                    } else {
+                                        "Enable Shuffle"
+                                    })
                                     .clicked()
                                 {
-                                    let new_shuf = self.queue.toggle_shuffle();
-                                    if new_shuf != state.is_shuffle {
-                                        self.controller.toggle_shuffle();
-                                    }
+                                    self.session.toggle_shuffle();
                                 }
 
                                 if prev_button(ui).on_hover_text("Previous Track").clicked() {
@@ -603,7 +589,7 @@ impl eframe::App for SpotyApp {
                                     .on_hover_text(if is_playing { "Pause" } else { "Play" })
                                     .clicked()
                                 {
-                                    self.controller.toggle_play_pause();
+                                    self.session.toggle_play_pause();
                                 }
 
                                 if next_button(ui).on_hover_text("Next Track").clicked() {
@@ -614,7 +600,7 @@ impl eframe::App for SpotyApp {
                                     .on_hover_text("Repeat Mode")
                                     .clicked()
                                 {
-                                    self.controller.cycle_repeat_mode();
+                                    self.session.cycle_repeat_mode();
                                 }
                             });
 
@@ -622,8 +608,9 @@ impl eframe::App for SpotyApp {
 
                             // Bottom: Progress bar
                             ui.horizontal(|ui| {
-                                let display_pos =
-                                    self.scrubbing_position.unwrap_or(state.position_secs);
+                                let display_pos = self
+                                    .scrubbing_position
+                                    .unwrap_or(state.playback.position_secs);
                                 let cur_m = (display_pos / 60.0).floor() as u32;
                                 let cur_s = (display_pos % 60.0).floor() as u32;
                                 ui.label(
@@ -634,8 +621,8 @@ impl eframe::App for SpotyApp {
                                 );
 
                                 let mut pos = display_pos;
-                                let max_duration = if state.duration_secs > 0.0 {
-                                    state.duration_secs
+                                let max_duration = if state.playback.duration_secs > 0.0 {
+                                    state.playback.duration_secs
                                 } else {
                                     1.0
                                 };
@@ -658,12 +645,12 @@ impl eframe::App for SpotyApp {
                                     || (is_released && self.scrubbing_position.is_some())
                                 {
                                     let target = self.scrubbing_position.unwrap_or(pos);
-                                    self.controller.seek(Duration::from_secs_f64(target));
+                                    self.session.seek(Duration::from_secs_f64(target));
                                     self.scrubbing_position = None;
                                 }
 
-                                let tot_m = (state.duration_secs / 60.0).floor() as u32;
-                                let tot_s = (state.duration_secs % 60.0).floor() as u32;
+                                let tot_m = (state.playback.duration_secs / 60.0).floor() as u32;
+                                let tot_s = (state.playback.duration_secs % 60.0).floor() as u32;
                                 ui.label(
                                     egui::RichText::new(format!("{}:{:02}", tot_m, tot_s))
                                         .size(11.0)
@@ -679,21 +666,21 @@ impl eframe::App for SpotyApp {
                         egui::vec2(side_width, 56.0),
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
-                            let mut vol_f64 = state.volume as f64;
+                            let mut vol_f64 = state.playback.volume as f64;
                             if SpotifySlider::new(&mut vol_f64, 1.0)
                                 .width(85.0)
                                 .tooltip_percent()
                                 .show(ui)
                                 .changed()
                             {
-                                self.controller.set_volume(vol_f64 as f32);
+                                self.session.set_volume(vol_f64 as f32);
                             }
 
-                            if speaker_button(ui, state.is_muted, state.volume)
+                            if speaker_button(ui, state.playback.is_muted, state.playback.volume)
                                 .on_hover_text("Mute / Unmute")
                                 .clicked()
                             {
-                                self.controller.toggle_mute();
+                                self.session.toggle_mute();
                             }
 
                             ui.add_space(8.0);
@@ -1206,7 +1193,7 @@ impl eframe::App for SpotyApp {
                                             self.queue_drawer_open = false;
                                         }
 
-                                        let upcoming_empty = self.queue.upcoming_tracks().is_empty();
+                                        let upcoming_empty = state.upcoming_tracks.is_empty();
                                         if !upcoming_empty {
                                             ui.add_space(6.0);
                                             let clear_btn = egui::Button::new(
@@ -1222,7 +1209,7 @@ impl eframe::App for SpotyApp {
                                                 .on_hover_text("Clear all upcoming tracks")
                                                 .clicked()
                                             {
-                                                self.queue.clear_upcoming();
+                                                self.session.clear_upcoming();
                                             }
                                         }
                                     },
@@ -1241,7 +1228,7 @@ impl eframe::App for SpotyApp {
                                 );
                                 ui.add_space(6.0);
 
-                                if let Some(current) = self.queue.current_track() {
+                                if let Some(current) = &state.current_track {
                                     let (row_rect, _) = ui.allocate_exact_size(
                                         egui::vec2(ui.available_width(), 48.0),
                                         egui::Sense::hover(),
@@ -1323,7 +1310,7 @@ impl eframe::App for SpotyApp {
                                 );
                                 ui.add_space(6.0);
 
-                                let upcoming = self.queue.upcoming_tracks();
+                                let upcoming = &state.upcoming_tracks;
                                 if upcoming.is_empty() {
                                     ui.add_space(10.0);
                                     ui.label(
@@ -1334,7 +1321,7 @@ impl eframe::App for SpotyApp {
                                         .color(COLOR_TEXT_SUBDUED),
                                     );
                                 } else {
-                                    for (q_idx, track) in upcoming {
+                                    for (q_idx, track) in upcoming.iter().enumerate() {
                                         let (row_rect, row_resp) = ui.allocate_exact_size(
                                             egui::vec2(ui.available_width(), 44.0),
                                             egui::Sense::click(),
@@ -1474,7 +1461,7 @@ impl eframe::App for SpotyApp {
                 self.play_track(track);
             }
             if let Some(idx) = remove_index {
-                self.queue.remove_at(idx);
+                self.session.remove_from_queue(idx);
             }
         }
 
@@ -1553,7 +1540,7 @@ impl eframe::App for SpotyApp {
                                     let _ = self.db.toggle_favorite(&tid);
                                 }
                                 if let Some(track) = add_to_queue_action {
-                                    self.queue.push_back(track);
+                                    self.session.enqueue_last(track);
                                 }
                                 if let Some((pl_id, trk_id)) = add_to_playlist_action {
                                     let _ = self.db.add_track_to_playlist(&pl_id, &trk_id);
@@ -1611,7 +1598,7 @@ impl eframe::App for SpotyApp {
                                     self.play_track(track);
                                 }
                                 if let Some(track) = add_to_queue_action {
-                                    self.queue.push_back(track);
+                                    self.session.enqueue_last(track);
                                 }
                                 if let Some((pl_id, trk_id)) = add_to_playlist_action {
                                     let _ = self.db.add_track_to_playlist(&pl_id, &trk_id);
@@ -1674,7 +1661,7 @@ impl eframe::App for SpotyApp {
                                     self.play_all_tracks(tracks);
                                 }
                                 if let Some(track) = add_to_queue_action {
-                                    self.queue.push_back(track);
+                                    self.session.enqueue_last(track);
                                 }
                                 if let Some((pl_id, trk_id)) = add_to_playlist_action {
                                     let _ = self.db.add_track_to_playlist(&pl_id, &trk_id);
@@ -1737,7 +1724,7 @@ impl eframe::App for SpotyApp {
                                     self.play_all_tracks(tracks);
                                 }
                                 if let Some(track) = add_to_queue_action {
-                                    self.queue.push_back(track);
+                                    self.session.enqueue_last(track);
                                 }
                                 if let Some((pl_id, trk_id)) = add_to_playlist_action {
                                     let _ = self.db.add_track_to_playlist(&pl_id, &trk_id);
@@ -1835,7 +1822,7 @@ impl eframe::App for SpotyApp {
                                     }
                                 }
                                 if let Some(track) = add_to_queue_action {
-                                    self.queue.push_back(track);
+                                    self.session.enqueue_last(track);
                                 }
                                 if let Some((pl_id, trk_id)) = add_to_playlist_action {
                                     let _ = self.db.add_track_to_playlist(&pl_id, &trk_id);

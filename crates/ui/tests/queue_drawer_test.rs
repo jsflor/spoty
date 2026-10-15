@@ -1,4 +1,17 @@
-use spoty_core::{AudioFormat, Queue, Track, TrackId};
+use spoty_audio::{
+    AudioStreamReader, AudioStreamResolver, BoundedStreamReader, PlaybackSession, SessionEvent,
+};
+use spoty_core::{AudioFormat, Track, TrackId};
+use std::sync::Arc;
+use std::time::Duration;
+
+struct DummyResolver;
+
+impl AudioStreamResolver for DummyResolver {
+    fn resolve_stream(&self, _track: &Track) -> anyhow::Result<Box<dyn AudioStreamReader>> {
+        Ok(BoundedStreamReader::from_bytes(vec![]))
+    }
+}
 
 #[test]
 fn test_queue_drawer_interactions() {
@@ -35,23 +48,59 @@ fn test_queue_drawer_interactions() {
         },
     ];
 
-    let mut queue = Queue::with_tracks(tracks, Some(0));
+    let (session, event_rx) = PlaybackSession::new(Arc::new(DummyResolver));
+    session.set_queue(tracks, Some(0));
 
-    // Initial state: current is t1, upcoming has t2 and t3
-    assert_eq!(queue.current_track().unwrap().title, "Current Track");
-    let upcoming = queue.upcoming_tracks();
-    assert_eq!(upcoming.len(), 2);
-    assert_eq!(upcoming[0].1.title, "Next Track");
-    assert_eq!(upcoming[1].1.title, "Third Track");
+    // Wait for initial state: current is t1, upcoming has t2 and t3
+    let mut initial_ok = false;
+    for _ in 0..10 {
+        if let Ok(SessionEvent::StateChanged(state)) =
+            event_rx.recv_timeout(Duration::from_millis(200))
+        {
+            if state.current_track.as_ref().map(|t| t.title.as_str()) == Some("Current Track")
+                && state.upcoming_tracks.len() == 2
+            {
+                assert_eq!(state.upcoming_tracks[0].title, "Next Track");
+                assert_eq!(state.upcoming_tracks[1].title, "Third Track");
+                initial_ok = true;
+                break;
+            }
+        }
+    }
+    assert!(initial_ok, "Initial queue state not reflected in session");
 
-    // Remove t2 (index 1)
-    queue.remove_at(1);
-    let upcoming_after_remove = queue.upcoming_tracks();
-    assert_eq!(upcoming_after_remove.len(), 1);
-    assert_eq!(upcoming_after_remove[0].1.title, "Third Track");
+    // Remove t2 (index 0 of upcoming)
+    session.remove_from_queue(0);
+    let mut after_remove_ok = false;
+    for _ in 0..10 {
+        if let Ok(SessionEvent::StateChanged(state)) =
+            event_rx.recv_timeout(Duration::from_millis(200))
+        {
+            if state.upcoming_tracks.len() == 1 {
+                assert_eq!(state.upcoming_tracks[0].title, "Third Track");
+                after_remove_ok = true;
+                break;
+            }
+        }
+    }
+    assert!(after_remove_ok, "Upcoming track not removed via session");
 
     // Clear upcoming
-    queue.clear_upcoming();
-    assert_eq!(queue.upcoming_tracks().len(), 0);
-    assert_eq!(queue.current_track().unwrap().title, "Current Track");
+    session.clear_upcoming();
+    let mut clear_ok = false;
+    for _ in 0..10 {
+        if let Ok(SessionEvent::StateChanged(state)) =
+            event_rx.recv_timeout(Duration::from_millis(200))
+        {
+            if state.upcoming_tracks.is_empty() {
+                assert_eq!(
+                    state.current_track.as_ref().map(|t| t.title.as_str()),
+                    Some("Current Track")
+                );
+                clear_ok = true;
+                break;
+            }
+        }
+    }
+    assert!(clear_ok, "Upcoming tracks not cleared via session");
 }

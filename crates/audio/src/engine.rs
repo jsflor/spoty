@@ -1,7 +1,7 @@
+use crate::reader::AudioStreamReader;
 use spoty_core::{PlaybackState, PlaybackStatus, RepeatMode, Track};
 use std::time::Duration;
 
-#[derive(Debug, Clone)]
 pub enum PlayerCommand {
     Play,
     Pause,
@@ -12,7 +12,15 @@ pub enum PlayerCommand {
     ToggleMute,
     ToggleShuffle,
     CycleRepeatMode,
-    LoadTrack { track: Track, audio_bytes: Vec<u8> },
+    LoadTrack {
+        track: Track,
+        audio_bytes: Vec<u8>,
+    },
+    LoadStream {
+        track: Track,
+        stream: Box<dyn AudioStreamReader>,
+        start_position: Duration,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -96,6 +104,16 @@ impl AudioEngine {
             PlayerCommand::LoadTrack { track, .. } => {
                 self.state.duration_secs = track.duration_secs as f64;
                 self.state.position_secs = 0.0;
+                self.state.status = PlaybackStatus::Playing;
+                self.state.current_track = Some(track);
+            }
+            PlayerCommand::LoadStream {
+                track,
+                start_position,
+                ..
+            } => {
+                self.state.duration_secs = track.duration_secs as f64;
+                self.state.position_secs = start_position.as_secs_f64();
                 self.state.status = PlaybackStatus::Playing;
                 self.state.current_track = Some(track);
             }
