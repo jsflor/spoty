@@ -13,11 +13,15 @@ The system SHALL expose an asynchronous `MusicProvider` trait that defines metho
 - **THEN** it asynchronously returns available playlists, albums, and playable tracks
 
 ### Requirement: Demo Audio Asset Resolution
-The system SHALL provide a default bundled demo provider that serves offline royalty-free audio tracks without requiring cloud configuration or internet access.
+The system SHALL provide a default bundled demo provider that serves offline authentic Creative Commons royalty-free audio tracks with embedded metadata and album art without requiring cloud configuration or internet access.
 
 #### Scenario: Playing bundled demo track
 - **WHEN** the demo provider is requested to stream a demo track by ID
-- **THEN** it resolves a readable byte stream of audio data ready for decoding
+- **THEN** it resolves a readable byte stream of valid Ogg Vorbis audio data ready for decoding
+
+#### Scenario: Cataloging demo tracks with metadata
+- **WHEN** the demo provider library is fetched
+- **THEN** it returns tracks with valid titles, artist attribution, album names, durations, and cover image URIs
 
 ### Requirement: Automatic Entity Aggregation
 The `Library` model SHALL provide a method to automatically populate `artists` and `albums` lists from unique values present across its `tracks` collection.

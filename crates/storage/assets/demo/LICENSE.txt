@@ -1,0 +1,25 @@
+Spoty Demo Audio Assets & Attribution
+=======================================
+
+The demo audio tracks bundled in this directory are composed by Kevin MacLeod and licensed under the Creative Commons Attribution 3.0 / 4.0 International License (CC-BY).
+
+1. "Consort for Brass"
+   - Composer: Kevin MacLeod (incompetech.com)
+   - Album: Classical Sampler
+   - License: Creative Commons Attribution 3.0 Unported (CC-BY 3.0)
+   - Source: https://freemusicarchive.org/music/Kevin_MacLeod/Classical_Sampler/Consort_for_Brass
+   - Attribution: "Consort for Brass" Kevin MacLeod (incompetech.com) Licensed under Creative Commons: By Attribution 3.0 License http://creativecommons.org/licenses/by/3.0/
+
+2. "The Rule"
+   - Composer: Kevin MacLeod (incompetech.com)
+   - Album: Classical Sampler
+   - License: Creative Commons Attribution 3.0 Unported (CC-BY 3.0)
+   - Source: https://freemusicarchive.org/music/Kevin_MacLeod/Classical_Sampler/The_Rule
+   - Attribution: "The Rule" Kevin MacLeod (incompetech.com) Licensed under Creative Commons: By Attribution 3.0 License http://creativecommons.org/licenses/by/3.0/
+
+3. "Monkeys Spinning Monkeys"
+   - Composer: Kevin MacLeod (incompetech.com)
+   - Album: Music for Comedy
+   - License: Creative Commons Attribution 3.0 Unported (CC-BY 3.0)
+   - Source: http://incompetech.com/music/royalty-free/index.html?isrc=USUAN1400011
+   - Attribution: "Monkeys Spinning Monkeys" Kevin MacLeod (incompetech.com) Licensed under Creative Commons: By Attribution 3.0 License http://creativecommons.org/licenses/by/3.0/
