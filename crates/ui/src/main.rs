@@ -1,6 +1,7 @@
 mod app;
 mod config;
 mod navigation;
+pub mod os;
 mod theme;
 mod views;
 mod widgets;

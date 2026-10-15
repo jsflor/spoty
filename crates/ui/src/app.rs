@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use crate::config::{ProviderType, SpotyConfig};
 use crate::navigation::{NavigationHistory, Route};
+use crate::os::OsIntegration;
 use crate::theme::{
     COLOR_ACCENT_GREEN, COLOR_BG_BASE, COLOR_BG_CARD, COLOR_BG_ELEVATED, COLOR_BG_HIGHLIGHT,
     COLOR_CANVAS, COLOR_DIVIDER, COLOR_TEXT_BASE, COLOR_TEXT_SUBDUED,
@@ -130,6 +131,7 @@ pub struct SpotyApp {
     sidebar_sort_order: LibrarySortOrder,
     queue_drawer_open: bool,
     scrubbing_position: Option<f64>,
+    os_integration: OsIntegration,
 }
 
 impl SpotyApp {
@@ -181,6 +183,10 @@ impl SpotyApp {
         let queue = Queue::with_tracks(library.tracks, None);
         let (session, event_rx) = PlaybackSession::with_queue(resolver, queue);
 
+        let mut os_integration = OsIntegration::new(session.clone(), _cc.egui_ctx.clone());
+        let initial_state = session.state();
+        os_integration.update(&initial_state);
+
         Self {
             catalog,
             provider,
@@ -198,6 +204,7 @@ impl SpotyApp {
             sidebar_sort_order: LibrarySortOrder::default(),
             queue_drawer_open: false,
             scrubbing_position: None,
+            os_integration,
         }
     }
 
@@ -420,7 +427,8 @@ impl eframe::App for SpotyApp {
 
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
-                SessionEvent::StateChanged(_) => {
+                SessionEvent::StateChanged(state) => {
+                    self.os_integration.update(&state);
                     ctx.request_repaint();
                 }
                 SessionEvent::VisualizerLevels(levels) => {
