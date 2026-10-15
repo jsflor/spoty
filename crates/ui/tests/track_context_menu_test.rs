@@ -1,9 +1,9 @@
 use spoty_core::{AudioFormat, Queue, Track, TrackId};
-use spoty_storage::LibraryDatabase;
+use spoty_storage::Catalog;
 
 #[test]
 fn test_track_context_actions_playlist_and_queue() {
-    let db = LibraryDatabase::open_in_memory().unwrap();
+    let catalog = Catalog::open_in_memory().unwrap();
 
     let track = Track {
         id: TrackId::new("trk_test_1"),
@@ -17,10 +17,12 @@ fn test_track_context_actions_playlist_and_queue() {
     };
 
     // 1. Create playlist and assign track
-    let playlist = db.create_playlist("Chill Vibes", None).unwrap();
-    db.add_track_to_playlist(&playlist.id, &track.id).unwrap();
+    let playlist = catalog.create_playlist("Chill Vibes", None).unwrap();
+    catalog
+        .add_track_to_playlist(&playlist.id, &track.id)
+        .unwrap();
 
-    let lib = db.load_library().unwrap();
+    let lib = catalog.library();
     let pl = lib.playlists.iter().find(|p| p.id == playlist.id).unwrap();
     assert_eq!(pl.track_ids.len(), 1);
     assert_eq!(pl.track_ids[0], track.id);

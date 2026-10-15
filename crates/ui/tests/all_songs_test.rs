@@ -1,9 +1,9 @@
 use spoty_core::{AudioFormat, Track, TrackId};
-use spoty_storage::LibraryDatabase;
+use spoty_storage::Catalog;
 
 #[test]
 fn test_all_songs_and_favorites_filtering() {
-    let db = LibraryDatabase::open_in_memory().unwrap();
+    let catalog = Catalog::open_in_memory().unwrap();
 
     let trk1 = Track {
         id: TrackId::new("t1"),
@@ -26,20 +26,22 @@ fn test_all_songs_and_favorites_filtering() {
         format: AudioFormat::Mp3,
     };
 
-    db.upsert_tracks(&[trk1.clone(), trk2.clone()]).unwrap();
-    let lib = db.load_library().unwrap();
+    catalog
+        .upsert_tracks(&[trk1.clone(), trk2.clone()])
+        .unwrap();
+    let lib = catalog.library();
     assert_eq!(lib.tracks.len(), 2);
 
     // Favoriting
-    assert!(!db.is_favorite(&trk1.id).unwrap());
-    db.toggle_favorite(&trk1.id).unwrap();
-    assert!(db.is_favorite(&trk1.id).unwrap());
+    assert!(!catalog.is_favorite(&trk1.id));
+    catalog.toggle_favorite(&trk1.id).unwrap();
+    assert!(catalog.is_favorite(&trk1.id));
 
-    // Filter to liked songs
+    // Filter to liked songs via instant in-memory predicate
     let liked_tracks: Vec<_> = lib
         .tracks
         .iter()
-        .filter(|t| db.is_favorite(&t.id).unwrap_or(false))
+        .filter(|t| catalog.is_favorite(&t.id))
         .collect();
     assert_eq!(liked_tracks.len(), 1);
     assert_eq!(liked_tracks[0].title, "Track Alpha");

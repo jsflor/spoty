@@ -1,3 +1,4 @@
+pub mod catalog;
 pub mod db;
 pub mod demo;
 pub mod metadata;
@@ -6,6 +7,7 @@ pub mod provider;
 pub mod spotify;
 pub mod subsonic;
 
+pub use catalog::Catalog;
 pub use db::LibraryDatabase;
 pub use demo::DemoProvider;
 pub use metadata::{ExtractedMetadata, extract_audio_metadata};
