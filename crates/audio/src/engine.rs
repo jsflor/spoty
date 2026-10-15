@@ -24,6 +24,15 @@ pub enum PlayerCommand {
         stream: Box<dyn AudioStreamReader>,
         start_position: Duration,
     },
+    SetCrossfade(u32),
+    QueueNextTrack {
+        track: Track,
+        audio_bytes: Vec<u8>,
+    },
+    QueueNextStream {
+        track: Track,
+        stream: Box<dyn AudioStreamReader>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,7 +40,24 @@ pub enum PlayerEvent {
     StateChanged(PlaybackState),
     VisualizerLevels([f32; 16]),
     TrackEnded(Track),
+    CrossfadeTransitionCompleted { outgoing: Track, current: Track },
     Error(String),
+}
+
+enum QueuedAudioSource {
+    Bytes(Vec<u8>),
+    Stream(Box<dyn AudioStreamReader>),
+}
+
+struct QueuedAudio {
+    track: Track,
+    source: QueuedAudioSource,
+}
+
+struct ActiveCrossfade {
+    next_track: Track,
+    next_sink: Box<dyn AudioSink>,
+    next_bytes: Option<Vec<u8>>,
 }
 
 pub struct AudioEngine {
@@ -39,6 +65,9 @@ pub struct AudioEngine {
     sink: Box<dyn AudioSink>,
     previous_volume: f32,
     current_bytes: Option<Vec<u8>>,
+    crossfade_secs: u32,
+    queued_next: Option<QueuedAudio>,
+    active_crossfade: Option<ActiveCrossfade>,
 }
 
 impl Default for AudioEngine {
@@ -68,6 +97,9 @@ impl AudioEngine {
             sink,
             previous_volume: 0.8,
             current_bytes: None,
+            crossfade_secs: 0,
+            queued_next: None,
+            active_crossfade: None,
         }
     }
 
@@ -87,6 +119,39 @@ impl AudioEngine {
         &mut *self.sink
     }
 
+    pub fn crossfade_secs(&self) -> u32 {
+        self.crossfade_secs
+    }
+
+    pub fn set_crossfade_secs(&mut self, secs: u32) {
+        self.crossfade_secs = secs.min(12);
+    }
+
+    pub fn is_crossfading(&self) -> bool {
+        self.active_crossfade.is_some()
+    }
+
+    pub fn queued_next_track(&self) -> Option<&Track> {
+        self.queued_next.as_ref().map(|q| &q.track)
+    }
+
+    pub fn sink_volume(&self) -> f32 {
+        self.sink.volume()
+    }
+
+    pub fn secondary_sink_volume(&self) -> Option<f32> {
+        self.active_crossfade.as_ref().map(|x| x.next_sink.volume())
+    }
+
+    /// Converts linear user volume [0.0, 1.0] to perceptual cubic gain (Weber-Fechner curve).
+    pub fn effective_gain(&self) -> f32 {
+        if self.state.is_muted {
+            0.0
+        } else {
+            self.state.volume.clamp(0.0, 1.0).powi(3)
+        }
+    }
+
     pub fn handle_command(&mut self, cmd: PlayerCommand) -> Vec<PlayerEvent> {
         let mut events = Vec::new();
 
@@ -94,6 +159,9 @@ impl AudioEngine {
             PlayerCommand::Play => {
                 if self.state.current_track.is_some() {
                     self.sink.play();
+                    if let Some(xfade) = &mut self.active_crossfade {
+                        xfade.next_sink.play();
+                    }
                     self.state.status = PlaybackStatus::Playing;
                     events.push(PlayerEvent::StateChanged(self.state.clone()));
                 }
@@ -101,6 +169,9 @@ impl AudioEngine {
             PlayerCommand::Pause => {
                 if self.state.status == PlaybackStatus::Playing {
                     self.sink.pause();
+                    if let Some(xfade) = &mut self.active_crossfade {
+                        xfade.next_sink.pause();
+                    }
                     self.state.status = PlaybackStatus::Paused;
                     events.push(PlayerEvent::StateChanged(self.state.clone()));
                     events.push(PlayerEvent::VisualizerLevels([0.0; 16]));
@@ -109,16 +180,26 @@ impl AudioEngine {
             PlayerCommand::TogglePlayPause => {
                 if self.state.status == PlaybackStatus::Playing {
                     self.sink.pause();
+                    if let Some(xfade) = &mut self.active_crossfade {
+                        xfade.next_sink.pause();
+                    }
                     self.state.status = PlaybackStatus::Paused;
                     events.push(PlayerEvent::VisualizerLevels([0.0; 16]));
                 } else if self.state.current_track.is_some() {
                     self.sink.play();
+                    if let Some(xfade) = &mut self.active_crossfade {
+                        xfade.next_sink.play();
+                    }
                     self.state.status = PlaybackStatus::Playing;
                 }
                 events.push(PlayerEvent::StateChanged(self.state.clone()));
             }
             PlayerCommand::Stop => {
                 self.sink.stop();
+                if let Some(mut xfade) = self.active_crossfade.take() {
+                    xfade.next_sink.stop();
+                }
+                self.queued_next = None;
                 self.current_bytes = None;
                 self.state.status = PlaybackStatus::Stopped;
                 self.state.position_secs = 0.0;
@@ -126,6 +207,10 @@ impl AudioEngine {
                 events.push(PlayerEvent::VisualizerLevels([0.0; 16]));
             }
             PlayerCommand::Seek(pos) => {
+                if let Some(mut xfade) = self.active_crossfade.take() {
+                    xfade.next_sink.stop();
+                }
+
                 let target_secs = pos.as_secs_f64().clamp(0.0, self.state.duration_secs);
                 self.state.position_secs = target_secs;
                 let target_dur = Duration::from_secs_f64(target_secs);
@@ -138,12 +223,7 @@ impl AudioEngine {
                             let skipped =
                                 decoder.skip_duration(target_dur).convert_samples::<f32>();
                             self.sink.append_source(Box::new(skipped));
-                            let active_vol = if self.state.is_muted {
-                                0.0
-                            } else {
-                                self.state.volume
-                            };
-                            self.sink.set_volume(active_vol);
+                            self.sink.set_volume(self.effective_gain());
                             if self.state.status == PlaybackStatus::Playing {
                                 self.sink.play();
                             } else {
@@ -164,8 +244,17 @@ impl AudioEngine {
                     self.state.is_muted = false;
                     self.previous_volume = clamped;
                 }
-                self.sink
-                    .set_volume(if self.state.is_muted { 0.0 } else { clamped });
+
+                let total_gain = self.effective_gain();
+                if let Some(xfade) = &mut self.active_crossfade {
+                    let remaining = (self.state.duration_secs - self.state.position_secs).max(0.0);
+                    let crossfade_dur = (self.crossfade_secs as f64).max(0.001);
+                    let t = (1.0 - (remaining / crossfade_dur)).clamp(0.0, 1.0) as f32;
+                    self.sink.set_volume(total_gain * (1.0 - t));
+                    xfade.next_sink.set_volume(total_gain * t);
+                } else {
+                    self.sink.set_volume(total_gain);
+                }
                 events.push(PlayerEvent::StateChanged(self.state.clone()));
             }
             PlayerCommand::ToggleMute => {
@@ -175,6 +264,9 @@ impl AudioEngine {
                     }
                     self.state.is_muted = true;
                     self.sink.set_volume(0.0);
+                    if let Some(xfade) = &mut self.active_crossfade {
+                        xfade.next_sink.set_volume(0.0);
+                    }
                 } else {
                     self.state.is_muted = false;
                     let restored = if self.previous_volume > 0.05 {
@@ -183,7 +275,17 @@ impl AudioEngine {
                         0.5
                     };
                     self.state.volume = restored;
-                    self.sink.set_volume(restored);
+                    let total_gain = self.effective_gain();
+                    if let Some(xfade) = &mut self.active_crossfade {
+                        let remaining =
+                            (self.state.duration_secs - self.state.position_secs).max(0.0);
+                        let crossfade_dur = (self.crossfade_secs as f64).max(0.001);
+                        let t = (1.0 - (remaining / crossfade_dur)).clamp(0.0, 1.0) as f32;
+                        self.sink.set_volume(total_gain * (1.0 - t));
+                        xfade.next_sink.set_volume(total_gain * t);
+                    } else {
+                        self.sink.set_volume(total_gain);
+                    }
                 }
                 events.push(PlayerEvent::StateChanged(self.state.clone()));
             }
@@ -200,6 +302,9 @@ impl AudioEngine {
                 events.push(PlayerEvent::StateChanged(self.state.clone()));
             }
             PlayerCommand::LoadTrack { track, audio_bytes } => {
+                if let Some(mut xfade) = self.active_crossfade.take() {
+                    xfade.next_sink.stop();
+                }
                 self.current_bytes = Some(audio_bytes.clone());
                 let stream = Box::new(Cursor::new(audio_bytes));
                 self.load_stream_internal(track, stream, Duration::ZERO, &mut events);
@@ -209,8 +314,26 @@ impl AudioEngine {
                 stream,
                 start_position,
             } => {
+                if let Some(mut xfade) = self.active_crossfade.take() {
+                    xfade.next_sink.stop();
+                }
                 self.current_bytes = None;
                 self.load_stream_internal(track, stream, start_position, &mut events);
+            }
+            PlayerCommand::SetCrossfade(secs) => {
+                self.crossfade_secs = secs.min(12);
+            }
+            PlayerCommand::QueueNextTrack { track, audio_bytes } => {
+                self.queued_next = Some(QueuedAudio {
+                    track,
+                    source: QueuedAudioSource::Bytes(audio_bytes),
+                });
+            }
+            PlayerCommand::QueueNextStream { track, stream } => {
+                self.queued_next = Some(QueuedAudio {
+                    track,
+                    source: QueuedAudioSource::Stream(stream),
+                });
             }
         }
 
@@ -236,12 +359,7 @@ impl AudioEngine {
                     let converted = decoder.convert_samples::<f32>();
                     self.sink.append_source(Box::new(converted));
                 }
-                let active_vol = if self.state.is_muted {
-                    0.0
-                } else {
-                    self.state.volume
-                };
-                self.sink.set_volume(active_vol);
+                self.sink.set_volume(self.effective_gain());
                 self.sink.play();
             }
             Err(e) => {
@@ -264,38 +382,144 @@ impl AudioEngine {
         if self.state.status == PlaybackStatus::Playing {
             self.state.position_secs += elapsed.as_secs_f64();
 
-            let is_finished = self.sink.is_empty()
-                && self.state.duration_secs > 0.0
-                && self.state.position_secs >= (self.state.duration_secs - 0.8).max(0.0);
+            let remaining = (self.state.duration_secs - self.state.position_secs).max(0.0);
+            let crossfade_dur = self.crossfade_secs as f64;
 
-            if is_finished {
-                if let Some(track) = self.state.current_track.clone() {
-                    events.push(PlayerEvent::TrackEnded(track));
-
-                    match self.state.repeat_mode {
-                        RepeatMode::One => {
-                            if let Some(bytes) = &self.current_bytes {
+            // Trigger crossfade pre-loading and start on secondary sink if eligible
+            if self.crossfade_secs > 0
+                && self.active_crossfade.is_none()
+                && self.state.duration_secs > crossfade_dur
+                && remaining <= crossfade_dur
+            {
+                if let Some(queued) = self.queued_next.take() {
+                    let mut next_sink = self.sink.create_secondary();
+                    next_sink.set_volume(0.0);
+                    let (source_res, next_bytes) = match queued.source {
+                        QueuedAudioSource::Bytes(bytes) => {
+                            if bytes.is_empty() {
+                                (Ok(()), Some(bytes))
+                            } else {
                                 let cursor = Cursor::new(bytes.clone());
-                                if let Ok(decoder) = rodio::Decoder::new(cursor) {
-                                    self.sink.stop();
-                                    let converted = decoder.convert_samples::<f32>();
-                                    self.sink.append_source(Box::new(converted));
-                                    let active_vol = if self.state.is_muted {
-                                        0.0
-                                    } else {
-                                        self.state.volume
-                                    };
-                                    self.sink.set_volume(active_vol);
-                                    self.sink.play();
+                                match rodio::Decoder::new(cursor) {
+                                    Ok(dec) => {
+                                        next_sink
+                                            .append_source(Box::new(dec.convert_samples::<f32>()));
+                                        (Ok(()), Some(bytes))
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(
+                                            "Failed to decode queued bytes for crossfade: {e}"
+                                        );
+                                        (Err(()), Some(bytes))
+                                    }
                                 }
                             }
-                            self.state.position_secs = 0.0;
-                            self.state.status = PlaybackStatus::Playing;
                         }
-                        _ => {
-                            self.state.status = PlaybackStatus::Stopped;
-                            self.state.position_secs = 0.0;
-                            events.push(PlayerEvent::VisualizerLevels([0.0; 16]));
+                        QueuedAudioSource::Stream(stream) => match rodio::Decoder::new(stream) {
+                            Ok(dec) => {
+                                next_sink.append_source(Box::new(dec.convert_samples::<f32>()));
+                                (Ok(()), None)
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to decode queued stream for crossfade: {e}"
+                                );
+                                (Err(()), None)
+                            }
+                        },
+                    };
+
+                    if source_res.is_ok() {
+                        next_sink.play();
+                        self.active_crossfade = Some(ActiveCrossfade {
+                            next_track: queued.track,
+                            next_sink,
+                            next_bytes,
+                        });
+                    }
+                } else if self.state.repeat_mode == RepeatMode::One
+                    && let (Some(track), Some(bytes)) =
+                        (&self.state.current_track, &self.current_bytes)
+                {
+                    let mut next_sink = self.sink.create_secondary();
+                    next_sink.set_volume(0.0);
+                    if bytes.is_empty() {
+                        next_sink.play();
+                        self.active_crossfade = Some(ActiveCrossfade {
+                            next_track: track.clone(),
+                            next_sink,
+                            next_bytes: Some(bytes.clone()),
+                        });
+                    } else {
+                        let cursor = Cursor::new(bytes.clone());
+                        if let Ok(dec) = rodio::Decoder::new(cursor) {
+                            next_sink.append_source(Box::new(dec.convert_samples::<f32>()));
+                            next_sink.play();
+                            self.active_crossfade = Some(ActiveCrossfade {
+                                next_track: track.clone(),
+                                next_sink,
+                                next_bytes: Some(bytes.clone()),
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Interpolate volumes during active crossfade
+            let total_gain = self.effective_gain();
+            if let Some(xfade) = &mut self.active_crossfade {
+                let t = (1.0 - (remaining / crossfade_dur.max(0.001))).clamp(0.0, 1.0) as f32;
+                self.sink.set_volume(total_gain * (1.0 - t));
+                xfade.next_sink.set_volume(total_gain * t);
+            }
+
+            // Track completion handling
+            if self.active_crossfade.is_some() {
+                if remaining <= 0.0 || (self.sink.is_empty() && remaining <= 0.5) {
+                    let outgoing = self.state.current_track.take().unwrap();
+                    let xfade = self.active_crossfade.take().unwrap();
+                    self.sink.stop();
+                    self.sink = xfade.next_sink;
+                    self.current_bytes = xfade.next_bytes;
+                    self.state.current_track = Some(xfade.next_track.clone());
+                    self.state.duration_secs = xfade.next_track.duration_secs as f64;
+                    self.state.position_secs = crossfade_dur;
+                    self.sink.set_volume(self.effective_gain());
+
+                    events.push(PlayerEvent::CrossfadeTransitionCompleted {
+                        outgoing,
+                        current: xfade.next_track,
+                    });
+                }
+            } else {
+                let is_finished = self.sink.is_empty()
+                    && self.state.duration_secs > 0.0
+                    && self.state.position_secs >= (self.state.duration_secs - 0.8).max(0.0);
+
+                if is_finished {
+                    if let Some(track) = self.state.current_track.clone() {
+                        events.push(PlayerEvent::TrackEnded(track));
+
+                        match self.state.repeat_mode {
+                            RepeatMode::One => {
+                                if let Some(bytes) = &self.current_bytes {
+                                    let cursor = Cursor::new(bytes.clone());
+                                    if let Ok(decoder) = rodio::Decoder::new(cursor) {
+                                        self.sink.stop();
+                                        let converted = decoder.convert_samples::<f32>();
+                                        self.sink.append_source(Box::new(converted));
+                                        self.sink.set_volume(self.effective_gain());
+                                        self.sink.play();
+                                    }
+                                }
+                                self.state.position_secs = 0.0;
+                                self.state.status = PlaybackStatus::Playing;
+                            }
+                            _ => {
+                                self.state.status = PlaybackStatus::Stopped;
+                                self.state.position_secs = 0.0;
+                                events.push(PlayerEvent::VisualizerLevels([0.0; 16]));
+                            }
                         }
                     }
                 }
@@ -426,5 +650,100 @@ mod tests {
                 .any(|e| matches!(e, PlayerEvent::TrackEnded(_)))
         );
         assert_eq!(engine.state().status, PlaybackStatus::Stopped);
+    }
+
+    #[test]
+    fn test_perceptual_volume_scaling() {
+        let mock_sink = MockSink::new();
+        let mut engine = AudioEngine::new_with_sink(Box::new(mock_sink));
+
+        // 50% slider value -> 0.125 gain (approx -18.06 dB)
+        engine.handle_command(PlayerCommand::SetVolume(0.5));
+        assert_eq!(engine.state().volume, 0.5);
+        let gain_50 = engine.sink_volume();
+        assert!((gain_50 - 0.125).abs() < 1e-4);
+        let db_50 = 20.0 * gain_50.log10();
+        assert!((db_50 - (-18.0618)).abs() < 0.01);
+
+        // 100% slider value -> 1.0 gain (0 dB)
+        engine.handle_command(PlayerCommand::SetVolume(1.0));
+        assert_eq!(engine.state().volume, 1.0);
+        assert!((engine.sink_volume() - 1.0).abs() < 1e-4);
+
+        // 0% slider value -> 0.0 gain
+        engine.handle_command(PlayerCommand::SetVolume(0.0));
+        assert_eq!(engine.state().volume, 0.0);
+        assert_eq!(engine.sink_volume(), 0.0);
+
+        // Mute / Unmute preservation
+        engine.handle_command(PlayerCommand::SetVolume(0.5));
+        assert!((engine.sink_volume() - 0.125).abs() < 1e-4);
+        engine.handle_command(PlayerCommand::ToggleMute);
+        assert_eq!(engine.sink_volume(), 0.0);
+        engine.handle_command(PlayerCommand::ToggleMute);
+        assert!((engine.sink_volume() - 0.125).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_crossfade_transitions_and_gain_interpolation() {
+        let mock_sink = MockSink::new();
+        let mut engine = AudioEngine::new_with_sink(Box::new(mock_sink));
+
+        engine.handle_command(PlayerCommand::SetCrossfade(4));
+        assert_eq!(engine.crossfade_secs(), 4);
+
+        let mut t1 = make_test_track();
+        t1.id = TrackId::new("t1");
+        t1.duration_secs = 10;
+
+        let mut t2 = make_test_track();
+        t2.id = TrackId::new("t2");
+        t2.title = "Second Track".into();
+        t2.duration_secs = 20;
+
+        // Load t1 and queue t2
+        engine.handle_command(PlayerCommand::SetVolume(1.0));
+        engine.handle_command(PlayerCommand::LoadTrack {
+            track: t1,
+            audio_bytes: vec![],
+        });
+        engine.handle_command(PlayerCommand::QueueNextTrack {
+            track: t2,
+            audio_bytes: vec![],
+        });
+        assert!(engine.queued_next_track().is_some());
+        assert!(!engine.is_crossfading());
+
+        // Advance to 5s (10 - 5 = 5s remaining > 4s crossfade)
+        engine.tick(Duration::from_secs(5));
+        assert!(!engine.is_crossfading());
+
+        // Advance 3s -> total 8s (10 - 8 = 2s remaining <= 4s crossfade)
+        // Crossfade starts! 2s remaining out of 4s -> t = (4 - 2) / 4 = 0.5
+        engine.tick(Duration::from_secs(3));
+        assert!(engine.is_crossfading());
+        assert!((engine.sink_volume() - 0.5).abs() < 1e-3);
+        assert!((engine.secondary_sink_volume().unwrap() - 0.5).abs() < 1e-3);
+
+        // Advance 1s -> total 9s (1s remaining out of 4s -> t = (4 - 1) / 4 = 0.75)
+        engine.tick(Duration::from_secs(1));
+        assert!((engine.sink_volume() - 0.25).abs() < 1e-3);
+        assert!((engine.secondary_sink_volume().unwrap() - 0.75).abs() < 1e-3);
+
+        // Advance 2s -> total 11s (10s track finishes, crossfade completes!)
+        let events = engine.tick(Duration::from_secs(2));
+        assert!(!engine.is_crossfading());
+        assert_eq!(
+            engine.state().current_track.as_ref().unwrap().title,
+            "Second Track"
+        );
+        assert_eq!(engine.state().duration_secs, 20.0);
+        assert_eq!(engine.state().position_secs, 4.0);
+        assert!((engine.sink_volume() - 1.0).abs() < 1e-3);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, PlayerEvent::CrossfadeTransitionCompleted { .. }))
+        );
     }
 }

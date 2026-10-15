@@ -1,4 +1,5 @@
 use crate::engine::{PlayerCommand, PlayerEvent};
+use crate::reader::AudioStreamReader;
 use crate::sink::AudioSink;
 use crate::worker::AudioWorker;
 use spoty_core::{PlaybackState, Track};
@@ -98,5 +99,21 @@ impl PlayerController {
         let _ = self
             .cmd_tx
             .send(PlayerCommand::LoadTrack { track, audio_bytes });
+    }
+
+    pub fn set_crossfade(&self, secs: u32) {
+        let _ = self.cmd_tx.send(PlayerCommand::SetCrossfade(secs));
+    }
+
+    pub fn queue_next_track(&self, track: Track, audio_bytes: Vec<u8>) {
+        let _ = self
+            .cmd_tx
+            .send(PlayerCommand::QueueNextTrack { track, audio_bytes });
+    }
+
+    pub fn queue_next_stream(&self, track: Track, stream: Box<dyn AudioStreamReader>) {
+        let _ = self
+            .cmd_tx
+            .send(PlayerCommand::QueueNextStream { track, stream });
     }
 }

@@ -53,6 +53,40 @@ impl SettingsView {
 
         ui.add_space(20.0);
 
+        // Section: Playback Preferences
+        ui.group(|ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                egui::RichText::new("Playback Preferences")
+                    .size(16.0)
+                    .strong()
+                    .color(egui::Color32::WHITE),
+            );
+            ui.label(
+                egui::RichText::new(
+                    "Crossfade smoothly blends the tail of a finishing track into the next track.",
+                )
+                .small()
+                .color(egui::Color32::GRAY),
+            );
+            ui.add_space(8.0);
+
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Crossfade:").color(egui::Color32::WHITE));
+                let slider = egui::Slider::new(&mut config.crossfade_secs, 0..=12)
+                    .custom_formatter(|val, _| {
+                        if val == 0.0 {
+                            "Off".to_string()
+                        } else {
+                            format!("{:.0}s", val)
+                        }
+                    });
+                ui.add(slider);
+            });
+        });
+
+        ui.add_space(20.0);
+
         // Section 1: Local Filesystem (Raspberry Pi / Local disk)
         ui.group(|ui| {
             ui.set_width(ui.available_width());

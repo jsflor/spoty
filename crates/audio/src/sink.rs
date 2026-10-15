@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Trait representing an audio hardware output sink.
@@ -6,8 +7,10 @@ pub trait AudioSink: Send {
     fn pause(&mut self);
     fn stop(&mut self);
     fn set_volume(&mut self, volume: f32);
+    fn volume(&self) -> f32;
     fn is_empty(&self) -> bool;
     fn append_source(&mut self, source: Box<dyn rodio::Source<Item = f32> + Send>);
+    fn create_secondary(&self) -> Box<dyn AudioSink>;
 }
 
 /// Thin wrapper that allows a boxed `dyn rodio::Source<Item = f32> + Send`
@@ -44,9 +47,18 @@ impl rodio::Source for BoxedSource {
     }
 }
 
+struct RodioStreamContext {
+    _stream: rodio::OutputStream,
+}
+
+// SAFETY: `OutputStream` contains a cpal `Stream` which has `PhantomData<*mut ()>` to denote
+// platform non-portability. Sharing `RodioStreamContext` across worker threads and sinks is safe.
+unsafe impl Send for RodioStreamContext {}
+unsafe impl Sync for RodioStreamContext {}
+
 /// Production audio sink adapter backed by `rodio::OutputStream` and `rodio::Sink`.
 pub struct RodioSink {
-    _stream: rodio::OutputStream,
+    stream_ctx: Arc<RodioStreamContext>,
     stream_handle: rodio::OutputStreamHandle,
     sink: Option<rodio::Sink>,
     volume: f32,
@@ -58,10 +70,11 @@ unsafe impl Send for RodioSink {}
 
 impl RodioSink {
     pub fn try_new() -> anyhow::Result<Self> {
-        let (_stream, stream_handle) = rodio::OutputStream::try_default()?;
+        let (stream, stream_handle) = rodio::OutputStream::try_default()?;
         let sink = rodio::Sink::try_new(&stream_handle).ok();
+        let stream_ctx = Arc::new(RodioStreamContext { _stream: stream });
         Ok(Self {
-            _stream,
+            stream_ctx,
             stream_handle,
             sink,
             volume: 1.0,
@@ -103,6 +116,10 @@ impl AudioSink for RodioSink {
         }
     }
 
+    fn volume(&self) -> f32 {
+        self.volume
+    }
+
     fn is_empty(&self) -> bool {
         self.sink.as_ref().map_or(true, |s| s.empty())
     }
@@ -114,6 +131,16 @@ impl AudioSink for RodioSink {
         if let Some(sink) = &self.sink {
             sink.append(BoxedSource(source));
         }
+    }
+
+    fn create_secondary(&self) -> Box<dyn AudioSink> {
+        let sink = rodio::Sink::try_new(&self.stream_handle).ok();
+        Box::new(RodioSink {
+            stream_ctx: Arc::clone(&self.stream_ctx),
+            stream_handle: self.stream_handle.clone(),
+            sink,
+            volume: self.volume,
+        })
     }
 }
 
@@ -165,6 +192,10 @@ impl AudioSink for MockSink {
         self.volume = volume;
     }
 
+    fn volume(&self) -> f32 {
+        self.volume
+    }
+
     fn is_empty(&self) -> bool {
         self.empty
     }
@@ -172,6 +203,10 @@ impl AudioSink for MockSink {
     fn append_source(&mut self, _source: Box<dyn rodio::Source<Item = f32> + Send>) {
         self.append_count += 1;
         self.empty = false;
+    }
+
+    fn create_secondary(&self) -> Box<dyn AudioSink> {
+        Box::new(MockSink::new())
     }
 }
 
@@ -198,11 +233,19 @@ impl AudioSink for NullSink {
         self.volume = volume;
     }
 
+    fn volume(&self) -> f32 {
+        self.volume
+    }
+
     fn is_empty(&self) -> bool {
         true
     }
 
     fn append_source(&mut self, _source: Box<dyn rodio::Source<Item = f32> + Send>) {}
+
+    fn create_secondary(&self) -> Box<dyn AudioSink> {
+        Box::new(NullSink::new())
+    }
 }
 
 #[cfg(test)]

@@ -56,6 +56,7 @@ pub enum SessionCommand {
     RemoveFromQueue(usize),
     ClearUpcoming,
     SetResolver(Arc<dyn AudioStreamResolver>),
+    SetCrossfade(u32),
 }
 
 impl std::fmt::Debug for SessionCommand {
@@ -90,6 +91,7 @@ impl std::fmt::Debug for SessionCommand {
             Self::RemoveFromQueue(idx) => f.debug_tuple("RemoveFromQueue").field(idx).finish(),
             Self::ClearUpcoming => write!(f, "ClearUpcoming"),
             Self::SetResolver(_) => write!(f, "SetResolver(<resolver>)"),
+            Self::SetCrossfade(s) => f.debug_tuple("SetCrossfade").field(s).finish(),
         }
     }
 }
@@ -148,6 +150,7 @@ impl PlaybackSession {
                     resolver,
                     queue,
                     repeat_mode: RepeatMode::Off,
+                    crossfade_secs: 0,
                     cached_state: cached_state_clone,
                     cmd_rx: session_cmd_rx,
                     event_tx: session_event_tx,
@@ -259,12 +262,17 @@ impl PlaybackSession {
     pub fn set_resolver(&self, resolver: Arc<dyn AudioStreamResolver>) {
         let _ = self.cmd_tx.send(SessionCommand::SetResolver(resolver));
     }
+
+    pub fn set_crossfade(&self, secs: u32) {
+        let _ = self.cmd_tx.send(SessionCommand::SetCrossfade(secs));
+    }
 }
 
 struct SessionCoordinator {
     resolver: Arc<dyn AudioStreamResolver>,
     queue: Queue,
     repeat_mode: RepeatMode,
+    crossfade_secs: u32,
     cached_state: Arc<RwLock<SessionState>>,
     cmd_rx: Receiver<SessionCommand>,
     event_tx: Sender<SessionEvent>,
@@ -373,6 +381,33 @@ impl SessionCoordinator {
             }
             SessionCommand::SetResolver(resolver) => {
                 self.resolver = resolver;
+                self.preload_next_if_needed();
+            }
+            SessionCommand::SetCrossfade(secs) => {
+                self.crossfade_secs = secs;
+                let _ = self.worker_tx.send(PlayerCommand::SetCrossfade(secs));
+                self.preload_next_if_needed();
+            }
+        }
+    }
+
+    fn preload_next_if_needed(&mut self) {
+        if self.crossfade_secs > 0 {
+            if let Some((_, next_track)) = self.queue.upcoming_tracks().first() {
+                if let Ok(stream) = self.resolver.resolve_stream(next_track) {
+                    let _ = self.worker_tx.send(PlayerCommand::QueueNextStream {
+                        track: (*next_track).clone(),
+                        stream,
+                    });
+                }
+            } else if self.repeat_mode == RepeatMode::All && !self.queue.tracks().is_empty() {
+                let first_track = &self.queue.tracks()[0];
+                if let Ok(stream) = self.resolver.resolve_stream(first_track) {
+                    let _ = self.worker_tx.send(PlayerCommand::QueueNextStream {
+                        track: first_track.clone(),
+                        stream,
+                    });
+                }
             }
         }
     }
@@ -386,6 +421,7 @@ impl SessionCoordinator {
                         stream,
                         start_position,
                     });
+                    self.preload_next_if_needed();
                 }
                 Err(e) => {
                     let err_msg = format!(
@@ -458,6 +494,14 @@ impl SessionCoordinator {
                     self.advance_next();
                 }
             },
+            PlayerEvent::CrossfadeTransitionCompleted {
+                outgoing: _,
+                current: _,
+            } => {
+                self.queue.next(self.repeat_mode);
+                self.preload_next_if_needed();
+                self.sync_and_emit();
+            }
             PlayerEvent::Error(err) => {
                 let _ = self.event_tx.send(SessionEvent::Error(err));
             }
@@ -465,6 +509,7 @@ impl SessionCoordinator {
     }
 
     fn sync_and_emit(&mut self) {
+        self.preload_next_if_needed();
         let mut state = self.cached_state.read().unwrap().clone();
         state.current_track = self.queue.current_track().cloned();
         state.upcoming_tracks = self

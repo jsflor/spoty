@@ -182,6 +182,7 @@ impl SpotyApp {
         });
         let queue = Queue::with_tracks(library.tracks, None);
         let (session, event_rx) = PlaybackSession::with_queue(resolver, queue);
+        session.set_crossfade(config.crossfade_secs);
 
         let mut os_integration = OsIntegration::new(session.clone(), _cc.egui_ctx.clone());
         let initial_state = session.state();
@@ -1766,6 +1767,7 @@ impl eframe::App for SpotyApp {
                                 }
                                 Route::Settings => {
                                     let provider_name = self.provider.display_name().to_string();
+                                    let prev_crossfade = self.config.crossfade_secs;
                                     let mut switch_demo = false;
                                     let mut switch_fs = None;
                                     let mut switch_s3 = None;
@@ -1782,6 +1784,11 @@ impl eframe::App for SpotyApp {
                                         &mut |subsonic| switch_subsonic = Some(subsonic),
                                         &mut |spotify| switch_spotify = Some(spotify),
                                     );
+
+                                    if self.config.crossfade_secs != prev_crossfade {
+                                        self.session.set_crossfade(self.config.crossfade_secs);
+                                        let _ = self.config.save();
+                                    }
 
                                     if switch_demo {
                                         self.switch_to_demo();

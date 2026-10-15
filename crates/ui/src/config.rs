@@ -21,6 +21,8 @@ pub struct SpotyConfig {
     pub s3: S3Config,
     pub subsonic: SubsonicConfig,
     pub spotify: SpotifyConfig,
+    #[serde(default)]
+    pub crossfade_secs: u32,
 }
 
 impl Default for SpotyConfig {
@@ -38,6 +40,7 @@ impl Default for SpotyConfig {
             },
             subsonic: SubsonicConfig::new("http://raspberrypi:4533", "admin", "secret"),
             spotify: SpotifyConfig::default(),
+            crossfade_secs: 0,
         }
     }
 }
@@ -83,11 +86,19 @@ mod tests {
 
     #[test]
     fn test_config_serialization() {
-        let cfg = SpotyConfig::default();
+        let mut cfg = SpotyConfig::default();
+        cfg.crossfade_secs = 5;
         let json = serde_json::to_string(&cfg).unwrap();
         let deserialized: SpotyConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(cfg.active_provider, deserialized.active_provider);
         assert_eq!(cfg.s3.bucket, deserialized.s3.bucket);
         assert_eq!(cfg.spotify.device_name, deserialized.spotify.device_name);
+        assert_eq!(cfg.crossfade_secs, deserialized.crossfade_secs);
+
+        // Backward compatibility: missing crossfade_secs deserializes to default (0)
+        let mut value = serde_json::to_value(&cfg).unwrap();
+        value.as_object_mut().unwrap().remove("crossfade_secs");
+        let cfg_compat: SpotyConfig = serde_json::from_value(value).unwrap();
+        assert_eq!(cfg_compat.crossfade_secs, 0);
     }
 }
