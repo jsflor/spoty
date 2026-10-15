@@ -2,7 +2,9 @@ use crate::theme::{
     COLOR_ACCENT_GREEN, COLOR_BG_CARD, COLOR_BG_ELEVATED, COLOR_BG_HIGHLIGHT, COLOR_DIVIDER,
     COLOR_TEXT_BASE, COLOR_TEXT_SUBDUED,
 };
-use crate::widgets::{TrackMenuActions, play_circle_button, render_track_context_menu};
+use crate::widgets::{
+    TrackMenuActions, draw_sort_arrow, play_circle_button, render_track_context_menu,
+};
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 use spoty_core::{PlaylistId, Track, TrackId};
 use spoty_storage::Library;
@@ -308,12 +310,6 @@ impl SongsView {
             for (rect, label, col, align) in cols {
                 let resp = ui.allocate_rect(rect, Sense::click());
                 let is_sorted = state.sort_column == col;
-                let text = if is_sorted {
-                    let arrow = if state.sort_ascending { " ▲" } else { " ▼" };
-                    format!("{}{}", label, arrow)
-                } else {
-                    label.to_string()
-                };
 
                 let color = if resp.hovered() || is_sorted {
                     COLOR_TEXT_BASE
@@ -327,8 +323,30 @@ impl SongsView {
                     egui::Align2::RIGHT_CENTER => Pos2::new(rect.right(), rect.center().y),
                     _ => rect.center(),
                 };
-                ui.painter()
-                    .text(pos, align, text, FontId::proportional(12.0), color);
+
+                let galley = ui.painter().layout_no_wrap(
+                    label.to_string(),
+                    FontId::proportional(12.0),
+                    color,
+                );
+                let text_pos = match align {
+                    egui::Align2::CENTER_CENTER => Pos2::new(
+                        pos.x - (galley.size().x / 2.0),
+                        pos.y - (galley.size().y / 2.0),
+                    ),
+                    egui::Align2::LEFT_CENTER => Pos2::new(pos.x, pos.y - (galley.size().y / 2.0)),
+                    egui::Align2::RIGHT_CENTER => {
+                        Pos2::new(pos.x - galley.size().x, pos.y - (galley.size().y / 2.0))
+                    }
+                    _ => pos,
+                };
+                ui.painter().galley(text_pos, galley.clone(), color);
+
+                if is_sorted {
+                    let arrow_x = text_pos.x + galley.size().x + 7.0;
+                    let arrow_center = Pos2::new(arrow_x, rect.center().y);
+                    draw_sort_arrow(ui.painter(), arrow_center, state.sort_ascending, 7.0, color);
+                }
 
                 if resp.clicked() {
                     if state.sort_column == col {

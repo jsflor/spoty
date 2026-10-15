@@ -64,10 +64,18 @@ impl<'a> SpotifySlider<'a> {
             ui.allocate_exact_size(Vec2::new(width, height), Sense::click_and_drag());
         let mut changed = false;
 
-        let is_hovered = response.hovered() || response.dragged();
+        let pointer_pos = response
+            .interact_pointer_pos()
+            .or_else(|| response.hover_pos())
+            .or_else(|| ui.input(|i| i.pointer.interact_pos()))
+            .or_else(|| ui.input(|i| i.pointer.hover_pos()));
 
-        if response.clicked() || response.dragged() {
-            if let Some(mouse_pos) = response.interact_pointer_pos() {
+        let is_interacting = response.clicked()
+            || response.dragged()
+            || (response.hovered() && ui.input(|i| i.pointer.primary_down()));
+
+        if is_interacting {
+            if let Some(mouse_pos) = pointer_pos {
                 let norm = ((mouse_pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
                 let new_val = norm as f64 * self.max;
                 if (*self.value - new_val).abs() > 0.0001 {
@@ -76,6 +84,10 @@ impl<'a> SpotifySlider<'a> {
                 }
             }
         }
+
+        let is_hovered = response.hovered()
+            || response.dragged()
+            || (response.hovered() && ui.input(|i| i.pointer.primary_down()));
 
         if ui.is_rect_visible(rect) {
             let painter = ui.painter();
@@ -118,8 +130,7 @@ impl<'a> SpotifySlider<'a> {
                 );
 
                 // Floating Tooltip Badge
-                if let (Some(tooltip_mode), Some(mouse_pos)) = (self.tooltip, response.hover_pos())
-                {
+                if let (Some(tooltip_mode), Some(mouse_pos)) = (self.tooltip, pointer_pos) {
                     let hover_norm = ((mouse_pos.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
                     let hover_val = hover_norm as f64 * self.max;
 

@@ -41,7 +41,7 @@ pub fn render_track_context_menu(
     // 3. Add to Playlist
     ui.menu_button("📁  Add to Playlist", |ui| {
         ui.set_min_width(180.0);
-        if ui.button("＋  New playlist").clicked() {
+        if ui.button("+  New playlist").clicked() {
             (actions.on_create_playlist_with_track)(track.id.clone());
             ui.close_menu();
         }

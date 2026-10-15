@@ -2,7 +2,9 @@ use crate::theme::{
     COLOR_ACCENT_GREEN, COLOR_BG_CARD, COLOR_BG_HIGHLIGHT, COLOR_DIVIDER, COLOR_TEXT_BASE,
     COLOR_TEXT_SUBDUED,
 };
-use crate::widgets::{TrackMenuActions, play_circle_button, render_track_context_menu};
+use crate::widgets::{
+    TrackMenuActions, draw_close_icon, play_circle_button, render_track_context_menu,
+};
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 use spoty_core::{PlaylistId, Track, TrackId};
 use spoty_storage::Library;
@@ -374,13 +376,7 @@ impl PlaylistView {
                     } else {
                         COLOR_TEXT_SUBDUED
                     };
-                    p.text(
-                        remove_rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "✕",
-                        FontId::proportional(12.0),
-                        col,
-                    );
+                    draw_close_icon(p, remove_rect.center(), 9.0, 1.4, col);
                 }
                 if remove_resp
                     .on_hover_text("Remove from this playlist")

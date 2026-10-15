@@ -42,6 +42,56 @@ fn test_player_controller_lifecycle() {
     }
 }
 
+#[test]
+fn test_player_controller_seek_updates_position_and_state() {
+    let (controller, event_rx) = PlayerController::new();
+
+    let track = Track {
+        id: TrackId::new("test_trk_seek"),
+        title: "Test Track For Seek".into(),
+        artist: "Test Artist".into(),
+        album: None,
+        duration_secs: 30,
+        cover_uri: None,
+        source_uri: "memory://test_seek".into(),
+        format: AudioFormat::Wav,
+    };
+
+    let wav_bytes = create_test_wav(440.0, 5.0);
+    controller.load_track(track, wav_bytes);
+
+    // Drain initial LoadTrack events until playing
+    let mut initial_loaded = false;
+    for _ in 0..10 {
+        if let Ok(PlayerEvent::StateChanged(st)) = event_rx.recv_timeout(Duration::from_millis(500))
+        {
+            if st.status == PlaybackStatus::Playing {
+                initial_loaded = true;
+                break;
+            }
+        }
+    }
+    assert!(initial_loaded, "Expected initial playing state");
+
+    // Seek to 12.0 seconds
+    controller.seek(Duration::from_secs_f64(12.0));
+
+    let mut seek_verified = false;
+    for _ in 0..10 {
+        if let Ok(PlayerEvent::StateChanged(st)) = event_rx.recv_timeout(Duration::from_millis(500))
+        {
+            if (st.position_secs - 12.0).abs() < 1.0 {
+                seek_verified = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        seek_verified,
+        "Expected state position to reflect seek target"
+    );
+}
+
 fn create_test_wav(freq: f32, duration_secs: f32) -> Vec<u8> {
     let sample_rate = 44100u32;
     let num_channels = 2u16;

@@ -1,5 +1,5 @@
 use crate::engine::{PlayerCommand, PlayerEvent};
-use rodio::{Decoder, OutputStream, Sink};
+use rodio::{Decoder, OutputStream, Sink, Source};
 use spoty_core::{PlaybackState, PlaybackStatus, RepeatMode};
 use std::io::Cursor;
 use std::sync::mpsc::{Receiver, Sender};
@@ -102,8 +102,37 @@ impl AudioWorker {
                         self.state.position_secs = target_secs;
 
                         if let Some(sink) = &sink_opt {
-                            let _ = sink.try_seek(Duration::from_secs_f64(target_secs));
+                            let target_dur = Duration::from_secs_f64(target_secs);
+                            if sink.try_seek(target_dur).is_err() {
+                                if let Some(bytes) = &current_bytes {
+                                    sink.stop();
+                                    let cursor = Cursor::new(bytes.clone());
+                                    match Decoder::new(cursor) {
+                                        Ok(decoder) => {
+                                            let skipped = decoder.skip_duration(target_dur);
+                                            sink.append(skipped);
+                                            sink.set_volume(if self.state.is_muted {
+                                                0.0
+                                            } else {
+                                                self.state.volume
+                                            });
+                                            if self.state.status == PlaybackStatus::Playing {
+                                                sink.play();
+                                            } else {
+                                                sink.pause();
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::error!(
+                                                "Failed to decode audio stream during seek: {}",
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                            }
                         }
+                        last_tick = Instant::now();
                         self.emit_state();
                     }
                     PlayerCommand::SetVolume(vol) => {

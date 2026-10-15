@@ -18,8 +18,9 @@ use crate::theme::{
 };
 use crate::views::{HomeView, PlaylistView, SearchView, SettingsView, SongsMode, SongsView};
 use crate::widgets::{
-    SpotifySlider, VisualizerWidget, heart_button, next_button, play_circle_button, prev_button,
-    queue_button, repeat_button, shuffle_button, speaker_button,
+    SpotifySlider, VisualizerWidget, draw_close_icon, draw_home_icon, draw_plus_icon, heart_button,
+    next_button, play_circle_button, prev_button, queue_button, repeat_button, shuffle_button,
+    speaker_button,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +52,7 @@ pub struct SpotyApp {
     editing_playlist: Option<PlaylistEditModal>,
     sidebar_category: Option<SidebarCategory>,
     queue_drawer_open: bool,
+    scrubbing_position: Option<f64>,
 }
 
 impl SpotyApp {
@@ -125,6 +127,7 @@ impl SpotyApp {
             editing_playlist: None,
             sidebar_category: None,
             queue_drawer_open: false,
+            scrubbing_position: None,
         }
     }
 
@@ -424,13 +427,7 @@ impl eframe::App for SpotyApp {
                         } else {
                             COLOR_TEXT_SUBDUED
                         };
-                        p.text(
-                            home_rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "⌂",
-                            egui::FontId::proportional(20.0),
-                            col,
-                        );
+                        draw_home_icon(p, home_rect.center(), 17.0, col);
                     }
                     if home_resp.on_hover_text("Home").clicked() {
                         self.nav.push(Route::Home);
@@ -621,8 +618,10 @@ impl eframe::App for SpotyApp {
 
                             // Bottom: Progress bar
                             ui.horizontal(|ui| {
-                                let cur_m = (state.position_secs / 60.0).floor() as u32;
-                                let cur_s = (state.position_secs % 60.0).floor() as u32;
+                                let display_pos =
+                                    self.scrubbing_position.unwrap_or(state.position_secs);
+                                let cur_m = (display_pos / 60.0).floor() as u32;
+                                let cur_s = (display_pos % 60.0).floor() as u32;
                                 ui.label(
                                     egui::RichText::new(format!("{}:{:02}", cur_m, cur_s))
                                         .size(11.0)
@@ -630,7 +629,7 @@ impl eframe::App for SpotyApp {
                                         .color(COLOR_TEXT_SUBDUED),
                                 );
 
-                                let mut pos = state.position_secs;
+                                let mut pos = display_pos;
                                 let max_duration = if state.duration_secs > 0.0 {
                                     state.duration_secs
                                 } else {
@@ -638,13 +637,21 @@ impl eframe::App for SpotyApp {
                                 };
                                 let slider_w = (center_width - 80.0).clamp(120.0, 520.0);
 
-                                if SpotifySlider::new(&mut pos, max_duration)
+                                let slider_resp = SpotifySlider::new(&mut pos, max_duration)
                                     .width(slider_w)
                                     .tooltip_time()
-                                    .show(ui)
-                                    .changed()
-                                {
+                                    .show(ui);
+
+                                if slider_resp.dragged() {
+                                    self.scrubbing_position = Some(pos);
+                                }
+
+                                if slider_resp.drag_stopped() || slider_resp.clicked() {
                                     self.controller.seek(Duration::from_secs_f64(pos));
+                                    self.scrubbing_position = None;
+                                } else if slider_resp.changed() && !slider_resp.dragged() {
+                                    self.controller.seek(Duration::from_secs_f64(pos));
+                                    self.scrubbing_position = None;
                                 }
 
                                 let tot_m = (state.duration_secs / 60.0).floor() as u32;
@@ -747,13 +754,12 @@ impl eframe::App for SpotyApp {
                                             COLOR_BG_BASE
                                         };
                                         p.circle_filled(btn_rect.center(), 14.0, bg);
-                                        p.text(
-                                            btn_rect.center(),
-                                            egui::Align2::CENTER_CENTER,
-                                            "＋",
-                                            egui::FontId::proportional(16.0),
-                                            COLOR_TEXT_BASE,
-                                        );
+                                        let icon_col = if btn_resp.hovered() {
+                                            COLOR_TEXT_BASE
+                                        } else {
+                                            COLOR_TEXT_SUBDUED
+                                        };
+                                        draw_plus_icon(p, btn_rect.center(), 12.0, 1.8, icon_col);
                                     }
                                     if btn_resp.on_hover_text("Create playlist").clicked() {
                                         let pl_name = format!(
@@ -1175,12 +1181,17 @@ impl eframe::App for SpotyApp {
                                                 12.0,
                                                 bg,
                                             );
-                                            ui.painter().text(
+                                            let close_col = if close_resp.hovered() {
+                                                COLOR_TEXT_BASE
+                                            } else {
+                                                COLOR_TEXT_SUBDUED
+                                            };
+                                            draw_close_icon(
+                                                ui.painter(),
                                                 close_rect.center(),
-                                                egui::Align2::CENTER_CENTER,
-                                                "✕",
-                                                egui::FontId::proportional(12.0),
-                                                COLOR_TEXT_BASE,
+                                                10.0,
+                                                1.5,
+                                                close_col,
                                             );
                                         }
                                         if close_resp.on_hover_text("Close Queue").clicked() {
@@ -1412,11 +1423,11 @@ impl eframe::App for SpotyApp {
                                                 } else {
                                                     COLOR_TEXT_SUBDUED
                                                 };
-                                                p.text(
+                                                draw_close_icon(
+                                                    p,
                                                     remove_rect.center(),
-                                                    egui::Align2::CENTER_CENTER,
-                                                    "✕",
-                                                    egui::FontId::proportional(12.0),
+                                                    9.0,
+                                                    1.4,
                                                     col,
                                                 );
                                             } else {
