@@ -33,17 +33,17 @@ impl AudioWorker {
 
     fn run(&mut self) {
         let stream_res = OutputStream::try_default();
-        let (stream, sink_opt) = match stream_res {
+        let (stream, stream_handle, mut sink_opt) = match stream_res {
             Ok((stream, stream_handle)) => {
                 let sink = Sink::try_new(&stream_handle).ok();
-                (Some(stream), sink)
+                (Some(stream), Some(stream_handle), sink)
             }
             Err(e) => {
                 tracing::warn!(
                     "Audio hardware initialization failed ({:?}); running in headless playback mode",
                     e
                 );
-                (None, None)
+                (None, None, None)
             }
         };
 
@@ -89,8 +89,9 @@ impl AudioWorker {
                         self.emit_state();
                     }
                     PlayerCommand::Stop => {
-                        if let Some(sink) = &sink_opt {
-                            sink.stop();
+                        sink_opt = None;
+                        if let Some(handle) = &stream_handle {
+                            sink_opt = Sink::try_new(handle).ok();
                         }
                         self.state.status = PlaybackStatus::Stopped;
                         self.state.position_secs = 0.0;
@@ -101,26 +102,26 @@ impl AudioWorker {
                         let target_secs = pos.as_secs_f64().clamp(0.0, self.state.duration_secs);
                         self.state.position_secs = target_secs;
 
-                        if let Some(sink) = &sink_opt {
-                            let target_dur = Duration::from_secs_f64(target_secs);
-                            if sink.try_seek(target_dur).is_err() {
-                                if let Some(bytes) = &current_bytes {
-                                    sink.stop();
+                        if let (Some(handle), Some(bytes)) = (&stream_handle, &current_bytes) {
+                            match Sink::try_new(handle) {
+                                Ok(new_sink) => {
                                     let cursor = Cursor::new(bytes.clone());
                                     match Decoder::new(cursor) {
                                         Ok(decoder) => {
+                                            let target_dur = Duration::from_secs_f64(target_secs);
                                             let skipped = decoder.skip_duration(target_dur);
-                                            sink.append(skipped);
-                                            sink.set_volume(if self.state.is_muted {
+                                            new_sink.append(skipped);
+                                            new_sink.set_volume(if self.state.is_muted {
                                                 0.0
                                             } else {
                                                 self.state.volume
                                             });
                                             if self.state.status == PlaybackStatus::Playing {
-                                                sink.play();
+                                                new_sink.play();
                                             } else {
-                                                sink.pause();
+                                                new_sink.pause();
                                             }
+                                            sink_opt = Some(new_sink);
                                         }
                                         Err(e) => {
                                             tracing::error!(
@@ -129,6 +130,9 @@ impl AudioWorker {
                                             );
                                         }
                                     }
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to create audio sink for seek: {}", e);
                                 }
                             }
                         }
@@ -185,23 +189,30 @@ impl AudioWorker {
                         self.emit_state();
                     }
                     PlayerCommand::LoadTrack { track, audio_bytes } => {
-                        if let Some(sink) = &sink_opt {
-                            sink.stop();
-                            let cursor = Cursor::new(audio_bytes.clone());
-                            match Decoder::new(cursor) {
-                                Ok(decoder) => {
-                                    sink.append(decoder);
-                                    sink.set_volume(if self.state.is_muted {
-                                        0.0
-                                    } else {
-                                        self.state.volume
-                                    });
-                                    sink.play();
+                        if let Some(handle) = &stream_handle {
+                            match Sink::try_new(handle) {
+                                Ok(new_sink) => {
+                                    let cursor = Cursor::new(audio_bytes.clone());
+                                    match Decoder::new(cursor) {
+                                        Ok(decoder) => {
+                                            new_sink.append(decoder);
+                                            new_sink.set_volume(if self.state.is_muted {
+                                                0.0
+                                            } else {
+                                                self.state.volume
+                                            });
+                                            new_sink.play();
+                                            sink_opt = Some(new_sink);
+                                        }
+                                        Err(e) => {
+                                            let err_msg = format!("Failed to decode audio: {}", e);
+                                            tracing::error!("{}", err_msg);
+                                            let _ = self.event_tx.send(PlayerEvent::Error(err_msg));
+                                        }
+                                    }
                                 }
                                 Err(e) => {
-                                    let err_msg = format!("Failed to decode audio: {}", e);
-                                    tracing::error!("{}", err_msg);
-                                    let _ = self.event_tx.send(PlayerEvent::Error(err_msg));
+                                    tracing::error!("Failed to create audio sink: {}", e);
                                 }
                             }
                         }
@@ -229,8 +240,11 @@ impl AudioWorker {
 
                 let is_finished = if let Some(sink) = &sink_opt {
                     sink.empty()
+                        && self.state.duration_secs > 0.0
+                        && self.state.position_secs >= (self.state.duration_secs - 0.8)
                 } else {
-                    self.state.position_secs >= self.state.duration_secs
+                    self.state.duration_secs > 0.0
+                        && self.state.position_secs >= self.state.duration_secs
                 };
 
                 if is_finished {
@@ -239,12 +253,20 @@ impl AudioWorker {
 
                         match self.state.repeat_mode {
                             RepeatMode::One => {
-                                if let Some(bytes) = &current_bytes {
-                                    if let Some(sink) = &sink_opt {
+                                if let (Some(handle), Some(bytes)) =
+                                    (&stream_handle, &current_bytes)
+                                {
+                                    if let Ok(new_sink) = Sink::try_new(handle) {
                                         let cursor = Cursor::new(bytes.clone());
                                         if let Ok(decoder) = Decoder::new(cursor) {
-                                            sink.append(decoder);
-                                            sink.play();
+                                            new_sink.append(decoder);
+                                            new_sink.set_volume(if self.state.is_muted {
+                                                0.0
+                                            } else {
+                                                self.state.volume
+                                            });
+                                            new_sink.play();
+                                            sink_opt = Some(new_sink);
                                         }
                                     }
                                     self.state.position_secs = 0.0;

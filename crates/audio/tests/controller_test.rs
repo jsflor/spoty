@@ -73,22 +73,56 @@ fn test_player_controller_seek_updates_position_and_state() {
     }
     assert!(initial_loaded, "Expected initial playing state");
 
-    // Seek to 12.0 seconds
+    // Seek forward to 12.0 seconds
     controller.seek(Duration::from_secs_f64(12.0));
 
-    let mut seek_verified = false;
+    let mut forward_seek_verified = false;
     for _ in 0..10 {
-        if let Ok(PlayerEvent::StateChanged(st)) = event_rx.recv_timeout(Duration::from_millis(500))
-        {
-            if (st.position_secs - 12.0).abs() < 1.0 {
-                seek_verified = true;
-                break;
+        if let Ok(event) = event_rx.recv_timeout(Duration::from_millis(500)) {
+            match event {
+                PlayerEvent::StateChanged(st) => {
+                    assert_eq!(st.status, PlaybackStatus::Playing);
+                    if (st.position_secs - 12.0).abs() < 1.0 {
+                        forward_seek_verified = true;
+                        break;
+                    }
+                }
+                PlayerEvent::TrackEnded(_) => {
+                    panic!("Premature TrackEnded emitted during forward seek!");
+                }
+                _ => {}
             }
         }
     }
     assert!(
-        seek_verified,
-        "Expected state position to reflect seek target"
+        forward_seek_verified,
+        "Expected state position to reflect forward seek target"
+    );
+
+    // Seek backward to 3.0 seconds
+    controller.seek(Duration::from_secs_f64(3.0));
+
+    let mut backward_seek_verified = false;
+    for _ in 0..10 {
+        if let Ok(event) = event_rx.recv_timeout(Duration::from_millis(500)) {
+            match event {
+                PlayerEvent::StateChanged(st) => {
+                    assert_eq!(st.status, PlaybackStatus::Playing);
+                    if (st.position_secs - 3.0).abs() < 1.0 {
+                        backward_seek_verified = true;
+                        break;
+                    }
+                }
+                PlayerEvent::TrackEnded(_) => {
+                    panic!("Premature TrackEnded emitted during backward seek!");
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(
+        backward_seek_verified,
+        "Expected state position to reflect backward seek target"
     );
 }
 

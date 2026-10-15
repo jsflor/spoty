@@ -43,5 +43,57 @@ async fn test_demo_tracks_end_to_end_playback() {
         panic!("Expected StateChanged event, got {:?}", event);
     }
 
+    // Test forward seek on compressed Ogg Vorbis track
+    controller.seek(Duration::from_secs(20));
+
+    let mut forward_seek_ok = false;
+    for _ in 0..10 {
+        if let Ok(event) = event_rx.recv_timeout(Duration::from_millis(500)) {
+            match event {
+                PlayerEvent::StateChanged(st) => {
+                    assert_eq!(st.status, PlaybackStatus::Playing);
+                    if (st.position_secs - 20.0).abs() < 1.0 {
+                        forward_seek_ok = true;
+                        break;
+                    }
+                }
+                PlayerEvent::TrackEnded(_) => {
+                    panic!("Premature TrackEnded on forward seek for Ogg track!");
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(
+        forward_seek_ok,
+        "Forward seek on Ogg track failed to update position"
+    );
+
+    // Test backward seek on compressed Ogg Vorbis track
+    controller.seek(Duration::from_secs(5));
+
+    let mut backward_seek_ok = false;
+    for _ in 0..10 {
+        if let Ok(event) = event_rx.recv_timeout(Duration::from_millis(500)) {
+            match event {
+                PlayerEvent::StateChanged(st) => {
+                    assert_eq!(st.status, PlaybackStatus::Playing);
+                    if (st.position_secs - 5.0).abs() < 1.0 {
+                        backward_seek_ok = true;
+                        break;
+                    }
+                }
+                PlayerEvent::TrackEnded(_) => {
+                    panic!("Premature TrackEnded on backward seek for Ogg track!");
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(
+        backward_seek_ok,
+        "Backward seek on Ogg track failed to update position"
+    );
+
     controller.stop();
 }

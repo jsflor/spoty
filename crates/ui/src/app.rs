@@ -642,15 +642,19 @@ impl eframe::App for SpotyApp {
                                     .tooltip_time()
                                     .show(ui);
 
-                                if slider_resp.dragged() {
+                                let is_down = ui.input(|i| i.pointer.primary_down());
+                                let is_released = ui.input(|i| i.pointer.primary_released());
+
+                                if slider_resp.dragged() || (slider_resp.hovered() && is_down) {
                                     self.scrubbing_position = Some(pos);
                                 }
 
-                                if slider_resp.drag_stopped() || slider_resp.clicked() {
-                                    self.controller.seek(Duration::from_secs_f64(pos));
-                                    self.scrubbing_position = None;
-                                } else if slider_resp.changed() && !slider_resp.dragged() {
-                                    self.controller.seek(Duration::from_secs_f64(pos));
+                                if slider_resp.drag_stopped()
+                                    || slider_resp.clicked()
+                                    || (is_released && self.scrubbing_position.is_some())
+                                {
+                                    let target = self.scrubbing_position.unwrap_or(pos);
+                                    self.controller.seek(Duration::from_secs_f64(target));
                                     self.scrubbing_position = None;
                                 }
 
