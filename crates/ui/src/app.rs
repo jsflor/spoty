@@ -19,7 +19,7 @@ use crate::theme::{
 use crate::views::{HomeView, PlaylistView, SearchView, SettingsView, SongsMode, SongsView};
 use crate::widgets::{
     SpotifySlider, VisualizerWidget, heart_button, next_button, play_circle_button, prev_button,
-    repeat_button, shuffle_button, speaker_button,
+    queue_button, repeat_button, shuffle_button, speaker_button,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +50,7 @@ pub struct SpotyApp {
     pending_delete_playlist: Option<Playlist>,
     editing_playlist: Option<PlaylistEditModal>,
     sidebar_category: Option<SidebarCategory>,
+    queue_drawer_open: bool,
 }
 
 impl SpotyApp {
@@ -123,6 +124,7 @@ impl SpotyApp {
             pending_delete_playlist: None,
             editing_playlist: None,
             sidebar_category: None,
+            queue_drawer_open: false,
         }
     }
 
@@ -656,7 +658,7 @@ impl eframe::App for SpotyApp {
                         },
                     );
 
-                    // RIGHT SECTION: Visualizer & Volume
+                    // RIGHT SECTION: Visualizer, Queue button & Volume
                     ui.allocate_ui_with_layout(
                         egui::vec2(side_width, 56.0),
                         egui::Layout::right_to_left(egui::Align::Center),
@@ -675,6 +677,19 @@ impl eframe::App for SpotyApp {
                                 .clicked()
                             {
                                 self.controller.toggle_mute();
+                            }
+
+                            ui.add_space(8.0);
+
+                            if queue_button(ui, self.queue_drawer_open)
+                                .on_hover_text(if self.queue_drawer_open {
+                                    "Hide Queue"
+                                } else {
+                                    "Show Queue"
+                                })
+                                .clicked()
+                            {
+                                self.queue_drawer_open = !self.queue_drawer_open;
                             }
 
                             ui.add_space(10.0);
@@ -1104,6 +1119,343 @@ impl eframe::App for SpotyApp {
                         }
                     });
             });
+
+        // Right Panel: "Queue" Floating Card Drawer (if open)
+        if self.queue_drawer_open {
+            let mut jump_track = None;
+            let mut remove_index = None;
+
+            egui::SidePanel::right("queue_drawer_panel")
+                .frame(
+                    egui::Frame::NONE
+                        .fill(COLOR_CANVAS)
+                        .inner_margin(egui::Margin {
+                            left: 4,
+                            right: 8,
+                            top: 4,
+                            bottom: 4,
+                        }),
+                )
+                .resizable(true)
+                .default_width(300.0)
+                .width_range(240.0..=440.0)
+                .show(ctx, |ui| {
+                    egui::Frame::new()
+                        .fill(COLOR_BG_BASE)
+                        .corner_radius(egui::CornerRadius::same(8))
+                        .inner_margin(egui::Margin::same(14))
+                        .show(ui, |ui| {
+                            // Header
+                            ui.horizontal(|ui| {
+                                ui.heading(
+                                    egui::RichText::new("Queue")
+                                        .size(16.0)
+                                        .strong()
+                                        .color(COLOR_TEXT_BASE),
+                                );
+
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        // Close button
+                                        let (close_rect, close_resp) = ui.allocate_exact_size(
+                                            egui::Vec2::splat(24.0),
+                                            egui::Sense::click(),
+                                        );
+                                        if ui.is_rect_visible(close_rect) {
+                                            let bg = if close_resp.hovered() {
+                                                COLOR_BG_HIGHLIGHT
+                                            } else {
+                                                egui::Color32::TRANSPARENT
+                                            };
+                                            ui.painter().circle_filled(
+                                                close_rect.center(),
+                                                12.0,
+                                                bg,
+                                            );
+                                            ui.painter().text(
+                                                close_rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                "✕",
+                                                egui::FontId::proportional(12.0),
+                                                COLOR_TEXT_BASE,
+                                            );
+                                        }
+                                        if close_resp.on_hover_text("Close Queue").clicked() {
+                                            self.queue_drawer_open = false;
+                                        }
+
+                                        let upcoming_empty = self.queue.upcoming_tracks().is_empty();
+                                        if !upcoming_empty {
+                                            ui.add_space(6.0);
+                                            let clear_btn = egui::Button::new(
+                                                egui::RichText::new("Clear Queue")
+                                                    .size(11.0)
+                                                    .color(COLOR_TEXT_SUBDUED),
+                                            )
+                                            .fill(COLOR_BG_CARD)
+                                            .corner_radius(egui::CornerRadius::same(12));
+
+                                            if ui
+                                                .add(clear_btn)
+                                                .on_hover_text("Clear all upcoming tracks")
+                                                .clicked()
+                                            {
+                                                self.queue.clear_upcoming();
+                                            }
+                                        }
+                                    },
+                                );
+                            });
+
+                            ui.add_space(12.0);
+
+                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                // 1. Now Playing section
+                                ui.label(
+                                    egui::RichText::new("Now playing")
+                                        .size(12.0)
+                                        .strong()
+                                        .color(COLOR_TEXT_SUBDUED),
+                                );
+                                ui.add_space(6.0);
+
+                                if let Some(current) = self.queue.current_track() {
+                                    let (row_rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(ui.available_width(), 48.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    if ui.is_rect_visible(row_rect) {
+                                        let p = ui.painter();
+                                        p.rect_filled(
+                                            row_rect,
+                                            egui::CornerRadius::same(6),
+                                            COLOR_BG_HIGHLIGHT,
+                                        );
+
+                                        // Cover
+                                        let thumb_rect = egui::Rect::from_min_size(
+                                            egui::pos2(row_rect.left() + 4.0, row_rect.min.y + 4.0),
+                                            egui::Vec2::splat(40.0),
+                                        );
+                                        if let Some(uri) = &current.cover_uri {
+                                            let img = egui::Image::new(uri)
+                                                .fit_to_exact_size(egui::Vec2::splat(40.0))
+                                                .corner_radius(egui::CornerRadius::same(4));
+                                            img.paint_at(ui, thumb_rect);
+                                        } else {
+                                            p.rect_filled(
+                                                thumb_rect,
+                                                egui::CornerRadius::same(4),
+                                                COLOR_BG_CARD,
+                                            );
+                                            p.text(
+                                                thumb_rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                "🎵",
+                                                egui::FontId::proportional(16.0),
+                                                COLOR_TEXT_SUBDUED,
+                                            );
+                                        }
+
+                                        // Title & Artist
+                                        p.text(
+                                            egui::pos2(row_rect.left() + 50.0, row_rect.top() + 10.0),
+                                            egui::Align2::LEFT_TOP,
+                                            &current.title,
+                                            egui::FontId::proportional(13.0),
+                                            COLOR_ACCENT_GREEN,
+                                        );
+                                        p.text(
+                                            egui::pos2(row_rect.left() + 50.0, row_rect.top() + 26.0),
+                                            egui::Align2::LEFT_TOP,
+                                            &current.artist,
+                                            egui::FontId::proportional(11.0),
+                                            COLOR_TEXT_SUBDUED,
+                                        );
+
+                                        // Note icon
+                                        p.text(
+                                            egui::pos2(row_rect.right() - 14.0, row_rect.center().y),
+                                            egui::Align2::RIGHT_CENTER,
+                                            "♫",
+                                            egui::FontId::proportional(14.0),
+                                            COLOR_ACCENT_GREEN,
+                                        );
+                                    }
+                                } else {
+                                    ui.label(
+                                        egui::RichText::new("No track currently playing")
+                                            .size(12.0)
+                                            .color(COLOR_TEXT_SUBDUED),
+                                    );
+                                }
+
+                                ui.add_space(16.0);
+
+                                // 2. Next Up section
+                                ui.label(
+                                    egui::RichText::new("Next in queue")
+                                        .size(12.0)
+                                        .strong()
+                                        .color(COLOR_TEXT_SUBDUED),
+                                );
+                                ui.add_space(6.0);
+
+                                let upcoming = self.queue.upcoming_tracks();
+                                if upcoming.is_empty() {
+                                    ui.add_space(10.0);
+                                    ui.label(
+                                        egui::RichText::new(
+                                            "Queue is empty. Right-click any track and select \"Add to Queue\"!",
+                                        )
+                                        .size(12.0)
+                                        .color(COLOR_TEXT_SUBDUED),
+                                    );
+                                } else {
+                                    for (q_idx, track) in upcoming {
+                                        let (row_rect, row_resp) = ui.allocate_exact_size(
+                                            egui::vec2(ui.available_width(), 44.0),
+                                            egui::Sense::click(),
+                                        );
+                                        let remove_rect = egui::Rect::from_center_size(
+                                            egui::pos2(
+                                                row_rect.right() - 14.0,
+                                                row_rect.center().y,
+                                            ),
+                                            egui::Vec2::splat(20.0),
+                                        );
+                                        let remove_resp =
+                                            ui.allocate_rect(remove_rect, egui::Sense::click());
+
+                                        if ui.is_rect_visible(row_rect) {
+                                            let p = ui.painter();
+                                            let is_hovered = row_resp.hovered();
+
+                                            if is_hovered {
+                                                p.rect_filled(
+                                                    row_rect,
+                                                    egui::CornerRadius::same(4),
+                                                    COLOR_BG_HIGHLIGHT,
+                                                );
+                                            }
+
+                                            // Thumbnail or play icon
+                                            let thumb_rect = egui::Rect::from_min_size(
+                                                egui::pos2(
+                                                    row_rect.left() + 4.0,
+                                                    row_rect.min.y + 4.0,
+                                                ),
+                                                egui::Vec2::splat(36.0),
+                                            );
+                                            if is_hovered {
+                                                p.rect_filled(
+                                                    thumb_rect,
+                                                    egui::CornerRadius::same(4),
+                                                    COLOR_BG_CARD,
+                                                );
+                                                p.text(
+                                                    thumb_rect.center(),
+                                                    egui::Align2::CENTER_CENTER,
+                                                    "▶",
+                                                    egui::FontId::proportional(12.0),
+                                                    COLOR_TEXT_BASE,
+                                                );
+                                            } else if let Some(uri) = &track.cover_uri {
+                                                let img = egui::Image::new(uri)
+                                                    .fit_to_exact_size(egui::Vec2::splat(36.0))
+                                                    .corner_radius(egui::CornerRadius::same(4));
+                                                img.paint_at(ui, thumb_rect);
+                                            } else {
+                                                p.rect_filled(
+                                                    thumb_rect,
+                                                    egui::CornerRadius::same(4),
+                                                    COLOR_BG_CARD,
+                                                );
+                                                p.text(
+                                                    thumb_rect.center(),
+                                                    egui::Align2::CENTER_CENTER,
+                                                    "🎵",
+                                                    egui::FontId::proportional(14.0),
+                                                    COLOR_TEXT_SUBDUED,
+                                                );
+                                            }
+
+                                            // Title & Artist
+                                            p.text(
+                                                egui::pos2(
+                                                    row_rect.left() + 46.0,
+                                                    row_rect.top() + 8.0,
+                                                ),
+                                                egui::Align2::LEFT_TOP,
+                                                &track.title,
+                                                egui::FontId::proportional(12.0),
+                                                COLOR_TEXT_BASE,
+                                            );
+                                            p.text(
+                                                egui::pos2(
+                                                    row_rect.left() + 46.0,
+                                                    row_rect.top() + 24.0,
+                                                ),
+                                                egui::Align2::LEFT_TOP,
+                                                &track.artist,
+                                                egui::FontId::proportional(10.0),
+                                                COLOR_TEXT_SUBDUED,
+                                            );
+
+                                            // Duration or remove button
+                                            if is_hovered || remove_resp.hovered() {
+                                                let col = if remove_resp.hovered() {
+                                                    egui::Color32::from_rgb(0xff, 0x60, 0x60)
+                                                } else {
+                                                    COLOR_TEXT_SUBDUED
+                                                };
+                                                p.text(
+                                                    remove_rect.center(),
+                                                    egui::Align2::CENTER_CENTER,
+                                                    "✕",
+                                                    egui::FontId::proportional(12.0),
+                                                    col,
+                                                );
+                                            } else {
+                                                p.text(
+                                                    egui::pos2(
+                                                        row_rect.right() - 6.0,
+                                                        row_rect.center().y,
+                                                    ),
+                                                    egui::Align2::RIGHT_CENTER,
+                                                    track.formatted_duration(),
+                                                    egui::FontId::proportional(11.0),
+                                                    COLOR_TEXT_SUBDUED,
+                                                );
+                                            }
+                                        }
+
+                                        if remove_resp
+                                            .on_hover_text("Remove from queue")
+                                            .clicked()
+                                        {
+                                            remove_index = Some(q_idx);
+                                        }
+
+                                        if row_resp.clicked() {
+                                            jump_track = Some(track.clone());
+                                        }
+
+                                        ui.add_space(2.0);
+                                    }
+                                }
+                            });
+                        });
+                });
+
+            if let Some(track) = jump_track {
+                self.play_track(track);
+            }
+            if let Some(idx) = remove_index {
+                self.queue.remove_at(idx);
+            }
+        }
 
         // Central Panel: Floating Card housing views
         egui::CentralPanel::default()

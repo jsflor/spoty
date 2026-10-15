@@ -284,3 +284,43 @@ pub fn speaker_button(ui: &mut egui::Ui, is_muted: bool, volume: f32) -> Respons
 
     response
 }
+
+/// Renders Queue button (`≡`) with active indicator
+pub fn queue_button(ui: &mut egui::Ui, is_open: bool) -> Response {
+    let size = Vec2::splat(32.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+
+    if ui.is_rect_visible(rect) {
+        let painter = ui.painter();
+        let center = rect.center();
+
+        let fg = if is_open {
+            COLOR_ACCENT_GREEN
+        } else if response.hovered() {
+            COLOR_TEXT_BASE
+        } else {
+            COLOR_TEXT_SUBDUED
+        };
+
+        // Draw 3 horizontal bars (queue icon)
+        let bar_width = 15.0;
+        let bar_height = 2.0;
+        let y_offsets = [-4.5, 0.0, 4.5];
+
+        for y_off in y_offsets {
+            let bar_rect = Rect::from_center_size(
+                Pos2::new(center.x, center.y + y_off),
+                Vec2::new(bar_width, bar_height),
+            );
+            painter.rect_filled(bar_rect, CornerRadius::same(1), fg);
+        }
+
+        // Active dot underneath if open
+        if is_open {
+            let dot_center = Pos2::new(center.x, rect.bottom() - 2.0);
+            painter.circle_filled(dot_center, 1.5, COLOR_ACCENT_GREEN);
+        }
+    }
+
+    response
+}

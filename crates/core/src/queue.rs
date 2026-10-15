@@ -169,6 +169,66 @@ impl Queue {
         }
     }
 
+    pub fn remove_at(&mut self, index: usize) -> Option<Track> {
+        if index >= self.tracks.len() {
+            return None;
+        }
+
+        let removed = self.tracks.remove(index);
+
+        if let Some(curr) = self.current_index {
+            if index < curr {
+                self.current_index = Some(curr - 1);
+            } else if index == curr {
+                if self.tracks.is_empty() {
+                    self.current_index = None;
+                } else if curr >= self.tracks.len() {
+                    self.current_index = Some(self.tracks.len() - 1);
+                }
+            }
+        }
+
+        if self.shuffle {
+            self.generate_shuffle_order();
+        }
+
+        Some(removed)
+    }
+
+    pub fn clear_upcoming(&mut self) {
+        if let Some(curr) = self.current_index {
+            self.tracks.truncate(curr + 1);
+        } else {
+            self.tracks.clear();
+        }
+
+        if self.shuffle {
+            self.generate_shuffle_order();
+        }
+    }
+
+    pub fn upcoming_tracks(&self) -> Vec<(usize, &Track)> {
+        if self.tracks.is_empty() {
+            return Vec::new();
+        }
+
+        if self.shuffle && !self.shuffle_order.is_empty() {
+            let current_pos = self
+                .current_index
+                .and_then(|curr| self.shuffle_order.iter().position(|&idx| idx == curr))
+                .unwrap_or(0);
+
+            self.shuffle_order
+                .iter()
+                .skip(current_pos + 1)
+                .filter_map(|&idx| self.tracks.get(idx).map(|t| (idx, t)))
+                .collect()
+        } else {
+            let start_idx = self.current_index.map(|i| i + 1).unwrap_or(0);
+            self.tracks.iter().enumerate().skip(start_idx).collect()
+        }
+    }
+
     fn generate_shuffle_order(&mut self) {
         let n = self.tracks.len();
         let mut order: Vec<usize> = (0..n).collect();
@@ -274,5 +334,32 @@ mod tests {
         queue.insert_next(make_test_track("4", "Song 4"));
         assert_eq!(queue.len(), 4);
         assert_eq!(queue.tracks()[1].title, "Song 4");
+    }
+
+    #[test]
+    fn test_queue_remove_clear_and_upcoming() {
+        let tracks = vec![
+            make_test_track("1", "Song 1"),
+            make_test_track("2", "Song 2"),
+            make_test_track("3", "Song 3"),
+            make_test_track("4", "Song 4"),
+        ];
+
+        let mut queue = Queue::with_tracks(tracks, Some(1)); // current is Song 2
+        let upcoming = queue.upcoming_tracks();
+        assert_eq!(upcoming.len(), 2);
+        assert_eq!(upcoming[0].1.title, "Song 3");
+        assert_eq!(upcoming[1].1.title, "Song 4");
+
+        // Remove track at index 2 (Song 3)
+        let removed = queue.remove_at(2);
+        assert_eq!(removed.unwrap().title, "Song 3");
+        assert_eq!(queue.len(), 3);
+        assert_eq!(queue.current_track().unwrap().title, "Song 2");
+
+        // Clear upcoming
+        queue.clear_upcoming();
+        assert_eq!(queue.len(), 2);
+        assert_eq!(queue.upcoming_tracks().len(), 0);
     }
 }
