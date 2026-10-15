@@ -2,7 +2,7 @@ use crate::theme::{
     COLOR_ACCENT_GREEN, COLOR_BG_CARD, COLOR_BG_HIGHLIGHT, COLOR_DIVIDER, COLOR_TEXT_BASE,
     COLOR_TEXT_SUBDUED,
 };
-use crate::widgets::play_circle_button;
+use crate::widgets::{TrackMenuActions, play_circle_button, render_track_context_menu};
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, Vec2};
 use spoty_core::{PlaylistId, Track, TrackId};
 use spoty_storage::Library;
@@ -22,6 +22,9 @@ impl PlaylistView {
         on_edit_details: &mut impl FnMut(PlaylistId),
         on_delete_playlist: &mut impl FnMut(PlaylistId),
         on_remove_track: &mut impl FnMut(PlaylistId, TrackId),
+        on_add_to_queue: &mut impl FnMut(Track),
+        on_add_to_playlist: &mut impl FnMut(PlaylistId, TrackId),
+        on_create_playlist_with_track: &mut impl FnMut(TrackId),
     ) {
         let playlist = match library.playlists.iter().find(|p| &p.id == playlist_id) {
             Some(p) => p,
@@ -341,32 +344,19 @@ impl PlaylistView {
 
             let fav = is_track_fav(&track.id);
 
-            row_resp.context_menu(|ui| {
-                ui.set_min_width(170.0);
-                if fav {
-                    if ui.button("Remove from your Liked Songs").clicked() {
-                        on_toggle_fav(track.id.clone());
-                        ui.close_menu();
-                    }
-                } else {
-                    if ui.button("Save to your Liked Songs").clicked() {
-                        on_toggle_fav(track.id.clone());
-                        ui.close_menu();
-                    }
-                }
+            let mut actions = TrackMenuActions {
+                is_fav: fav,
+                custom_playlists: &library.playlists,
+                current_playlist_id: Some(playlist_id),
+                on_toggle_fav,
+                on_add_to_queue,
+                on_add_to_playlist,
+                on_create_playlist_with_track,
+                on_remove_from_playlist: Some(on_remove_track),
+            };
 
-                if is_custom {
-                    if ui
-                        .button(
-                            egui::RichText::new("Remove from this playlist")
-                                .color(Color32::from_rgb(0xff, 0x60, 0x60)),
-                        )
-                        .clicked()
-                    {
-                        on_remove_track(playlist.id.clone(), track.id.clone());
-                        ui.close_menu();
-                    }
-                }
+            row_resp.context_menu(|ui| {
+                render_track_context_menu(ui, track, &mut actions);
             });
 
             // Remove button for custom playlists

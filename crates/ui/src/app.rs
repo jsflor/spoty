@@ -1131,14 +1131,29 @@ impl eframe::App for SpotyApp {
                                 let mut nav_action = None;
                                 let mut play_action = None;
                                 let mut playlist_action = None;
+                                let db_ref = &self.db;
+                                let is_fav_closure = |tid: &spoty_core::TrackId| {
+                                    db_ref.is_favorite(tid).unwrap_or(false)
+                                };
+                                let mut toggle_fav_action = None;
+                                let mut add_to_queue_action = None;
+                                let mut add_to_playlist_action = None;
+                                let mut create_pl_action = None;
 
                                 HomeView::show(
                                     ui,
                                     &self.library,
                                     active_track_id,
+                                    &is_fav_closure,
                                     &mut |route| nav_action = Some(route),
                                     &mut |track| play_action = Some(track),
                                     &mut |playlist| playlist_action = Some(playlist),
+                                    &mut |tid| toggle_fav_action = Some(tid),
+                                    &mut |track| add_to_queue_action = Some(track),
+                                    &mut |pl_id, trk_id| {
+                                        add_to_playlist_action = Some((pl_id, trk_id))
+                                    },
+                                    &mut |trk_id| create_pl_action = Some(trk_id),
                                 );
 
                                 if let Some(route) = nav_action {
@@ -1161,20 +1176,91 @@ impl eframe::App for SpotyApp {
                                         .collect();
                                     self.play_all_tracks(tracks);
                                 }
+                                if let Some(tid) = toggle_fav_action {
+                                    let _ = self.db.toggle_favorite(&tid);
+                                }
+                                if let Some(track) = add_to_queue_action {
+                                    self.queue.push_back(track);
+                                }
+                                if let Some((pl_id, trk_id)) = add_to_playlist_action {
+                                    let _ = self.db.add_track_to_playlist(&pl_id, &trk_id);
+                                    if let Some(pl) =
+                                        self.library.playlists.iter_mut().find(|p| p.id == pl_id)
+                                    {
+                                        if !pl.track_ids.contains(&trk_id) {
+                                            pl.track_ids.push(trk_id);
+                                        }
+                                    }
+                                }
+                                if let Some(trk_id) = create_pl_action {
+                                    let pl_name = format!(
+                                        "My Playlist #{}",
+                                        self.library.playlists.len() + 1
+                                    );
+                                    if let Ok(new_pl) = self.db.create_playlist(&pl_name, None) {
+                                        let _ = self.db.add_track_to_playlist(&new_pl.id, &trk_id);
+                                        let mut pl = new_pl;
+                                        pl.track_ids.push(trk_id);
+                                        self.library.playlists.push(pl);
+                                    }
+                                }
                             }
                             Route::Search => {
                                 let mut play_action = None;
+                                let db_ref = &self.db;
+                                let is_fav_closure = |tid: &spoty_core::TrackId| {
+                                    db_ref.is_favorite(tid).unwrap_or(false)
+                                };
+                                let mut toggle_fav_action = None;
+                                let mut add_to_queue_action = None;
+                                let mut add_to_playlist_action = None;
+                                let mut create_pl_action = None;
 
                                 SearchView::show(
                                     ui,
                                     &self.library,
                                     &mut self.search_query,
                                     active_track_id,
+                                    &is_fav_closure,
+                                    &mut |tid| toggle_fav_action = Some(tid),
                                     &mut |track| play_action = Some(track),
+                                    &mut |track| add_to_queue_action = Some(track),
+                                    &mut |pl_id, trk_id| {
+                                        add_to_playlist_action = Some((pl_id, trk_id))
+                                    },
+                                    &mut |trk_id| create_pl_action = Some(trk_id),
                                 );
 
+                                if let Some(tid) = toggle_fav_action {
+                                    let _ = self.db.toggle_favorite(&tid);
+                                }
                                 if let Some(track) = play_action {
                                     self.play_track(track);
+                                }
+                                if let Some(track) = add_to_queue_action {
+                                    self.queue.push_back(track);
+                                }
+                                if let Some((pl_id, trk_id)) = add_to_playlist_action {
+                                    let _ = self.db.add_track_to_playlist(&pl_id, &trk_id);
+                                    if let Some(pl) =
+                                        self.library.playlists.iter_mut().find(|p| p.id == pl_id)
+                                    {
+                                        if !pl.track_ids.contains(&trk_id) {
+                                            pl.track_ids.push(trk_id);
+                                        }
+                                    }
+                                }
+                                if let Some(trk_id) = create_pl_action {
+                                    let pl_name = format!(
+                                        "My Playlist #{}",
+                                        self.library.playlists.len() + 1
+                                    );
+                                    if let Ok(new_pl) = self.db.create_playlist(&pl_name, None) {
+                                        let _ = self.db.add_track_to_playlist(&new_pl.id, &trk_id);
+                                        let mut pl = new_pl;
+                                        pl.track_ids.push(trk_id);
+                                        self.library.playlists.push(pl);
+                                    }
                                 }
                             }
                             Route::AllSongs => {
@@ -1185,6 +1271,9 @@ impl eframe::App for SpotyApp {
                                     db_ref.is_favorite(tid).unwrap_or(false)
                                 };
                                 let mut toggle_fav_action = None;
+                                let mut add_to_queue_action = None;
+                                let mut add_to_playlist_action = None;
+                                let mut create_pl_action = None;
 
                                 SongsView::show(
                                     ui,
@@ -1195,6 +1284,11 @@ impl eframe::App for SpotyApp {
                                     &mut |tid| toggle_fav_action = Some(tid),
                                     &mut |track| play_action = Some(track),
                                     &mut |tracks| play_all_action = Some(tracks),
+                                    &mut |track| add_to_queue_action = Some(track),
+                                    &mut |pl_id, trk_id| {
+                                        add_to_playlist_action = Some((pl_id, trk_id))
+                                    },
+                                    &mut |trk_id| create_pl_action = Some(trk_id),
                                 );
 
                                 if let Some(tid) = toggle_fav_action {
@@ -1205,6 +1299,31 @@ impl eframe::App for SpotyApp {
                                 }
                                 if let Some(tracks) = play_all_action {
                                     self.play_all_tracks(tracks);
+                                }
+                                if let Some(track) = add_to_queue_action {
+                                    self.queue.push_back(track);
+                                }
+                                if let Some((pl_id, trk_id)) = add_to_playlist_action {
+                                    let _ = self.db.add_track_to_playlist(&pl_id, &trk_id);
+                                    if let Some(pl) =
+                                        self.library.playlists.iter_mut().find(|p| p.id == pl_id)
+                                    {
+                                        if !pl.track_ids.contains(&trk_id) {
+                                            pl.track_ids.push(trk_id);
+                                        }
+                                    }
+                                }
+                                if let Some(trk_id) = create_pl_action {
+                                    let pl_name = format!(
+                                        "My Playlist #{}",
+                                        self.library.playlists.len() + 1
+                                    );
+                                    if let Ok(new_pl) = self.db.create_playlist(&pl_name, None) {
+                                        let _ = self.db.add_track_to_playlist(&new_pl.id, &trk_id);
+                                        let mut pl = new_pl;
+                                        pl.track_ids.push(trk_id);
+                                        self.library.playlists.push(pl);
+                                    }
                                 }
                             }
                             Route::LikedSongs => {
@@ -1215,6 +1334,9 @@ impl eframe::App for SpotyApp {
                                     db_ref.is_favorite(tid).unwrap_or(false)
                                 };
                                 let mut toggle_fav_action = None;
+                                let mut add_to_queue_action = None;
+                                let mut add_to_playlist_action = None;
+                                let mut create_pl_action = None;
 
                                 SongsView::show(
                                     ui,
@@ -1225,6 +1347,11 @@ impl eframe::App for SpotyApp {
                                     &mut |tid| toggle_fav_action = Some(tid),
                                     &mut |track| play_action = Some(track),
                                     &mut |tracks| play_all_action = Some(tracks),
+                                    &mut |track| add_to_queue_action = Some(track),
+                                    &mut |pl_id, trk_id| {
+                                        add_to_playlist_action = Some((pl_id, trk_id))
+                                    },
+                                    &mut |trk_id| create_pl_action = Some(trk_id),
                                 );
 
                                 if let Some(tid) = toggle_fav_action {
@@ -1236,6 +1363,31 @@ impl eframe::App for SpotyApp {
                                 if let Some(tracks) = play_all_action {
                                     self.play_all_tracks(tracks);
                                 }
+                                if let Some(track) = add_to_queue_action {
+                                    self.queue.push_back(track);
+                                }
+                                if let Some((pl_id, trk_id)) = add_to_playlist_action {
+                                    let _ = self.db.add_track_to_playlist(&pl_id, &trk_id);
+                                    if let Some(pl) =
+                                        self.library.playlists.iter_mut().find(|p| p.id == pl_id)
+                                    {
+                                        if !pl.track_ids.contains(&trk_id) {
+                                            pl.track_ids.push(trk_id);
+                                        }
+                                    }
+                                }
+                                if let Some(trk_id) = create_pl_action {
+                                    let pl_name = format!(
+                                        "My Playlist #{}",
+                                        self.library.playlists.len() + 1
+                                    );
+                                    if let Ok(new_pl) = self.db.create_playlist(&pl_name, None) {
+                                        let _ = self.db.add_track_to_playlist(&new_pl.id, &trk_id);
+                                        let mut pl = new_pl;
+                                        pl.track_ids.push(trk_id);
+                                        self.library.playlists.push(pl);
+                                    }
+                                }
                             }
                             Route::Playlist(playlist_id) => {
                                 let mut play_action = None;
@@ -1243,6 +1395,9 @@ impl eframe::App for SpotyApp {
                                 let mut edit_action = None;
                                 let mut delete_action = None;
                                 let mut remove_track_action = None;
+                                let mut add_to_queue_action = None;
+                                let mut add_to_playlist_action = None;
+                                let mut create_pl_action = None;
 
                                 let db_ref = &self.db;
                                 let is_fav_closure = |tid: &spoty_core::TrackId| {
@@ -1264,6 +1419,11 @@ impl eframe::App for SpotyApp {
                                     &mut |pl_id, trk_id| {
                                         remove_track_action = Some((pl_id, trk_id))
                                     },
+                                    &mut |track| add_to_queue_action = Some(track),
+                                    &mut |pl_id, trk_id| {
+                                        add_to_playlist_action = Some((pl_id, trk_id))
+                                    },
+                                    &mut |trk_id| create_pl_action = Some(trk_id),
                                 );
 
                                 if let Some(tid) = toggle_fav_action {
@@ -1299,6 +1459,31 @@ impl eframe::App for SpotyApp {
                                         self.library.playlists.iter_mut().find(|p| p.id == pl_id)
                                     {
                                         pl.track_ids.retain(|id| id != &trk_id);
+                                    }
+                                }
+                                if let Some(track) = add_to_queue_action {
+                                    self.queue.push_back(track);
+                                }
+                                if let Some((pl_id, trk_id)) = add_to_playlist_action {
+                                    let _ = self.db.add_track_to_playlist(&pl_id, &trk_id);
+                                    if let Some(pl) =
+                                        self.library.playlists.iter_mut().find(|p| p.id == pl_id)
+                                    {
+                                        if !pl.track_ids.contains(&trk_id) {
+                                            pl.track_ids.push(trk_id);
+                                        }
+                                    }
+                                }
+                                if let Some(trk_id) = create_pl_action {
+                                    let pl_name = format!(
+                                        "My Playlist #{}",
+                                        self.library.playlists.len() + 1
+                                    );
+                                    if let Ok(new_pl) = self.db.create_playlist(&pl_name, None) {
+                                        let _ = self.db.add_track_to_playlist(&new_pl.id, &trk_id);
+                                        let mut pl = new_pl;
+                                        pl.track_ids.push(trk_id);
+                                        self.library.playlists.push(pl);
                                     }
                                 }
                             }

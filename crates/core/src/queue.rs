@@ -151,6 +151,24 @@ impl Queue {
         self.tracks.get(next_idx)
     }
 
+    pub fn push_back(&mut self, track: Track) {
+        self.tracks.push(track);
+        if self.shuffle {
+            self.generate_shuffle_order();
+        }
+    }
+
+    pub fn insert_next(&mut self, track: Track) {
+        let insert_idx = match self.current_index {
+            Some(idx) => (idx + 1).min(self.tracks.len()),
+            None => self.tracks.len(),
+        };
+        self.tracks.insert(insert_idx, track);
+        if self.shuffle {
+            self.generate_shuffle_order();
+        }
+    }
+
     fn generate_shuffle_order(&mut self) {
         let n = self.tracks.len();
         let mut order: Vec<usize> = (0..n).collect();
@@ -235,5 +253,26 @@ mod tests {
         let mut queue = Queue::with_tracks(tracks, Some(0));
         let repeated = queue.next(RepeatMode::One).unwrap();
         assert_eq!(repeated.title, "Song 1");
+    }
+
+    #[test]
+    fn test_queue_push_back_and_insert_next() {
+        let tracks = vec![
+            make_test_track("1", "Song 1"),
+            make_test_track("2", "Song 2"),
+        ];
+
+        let mut queue = Queue::with_tracks(tracks, Some(0));
+        assert_eq!(queue.len(), 2);
+
+        // Push back
+        queue.push_back(make_test_track("3", "Song 3"));
+        assert_eq!(queue.len(), 3);
+        assert_eq!(queue.tracks()[2].title, "Song 3");
+
+        // Insert next (after current_index 0 -> index 1)
+        queue.insert_next(make_test_track("4", "Song 4"));
+        assert_eq!(queue.len(), 4);
+        assert_eq!(queue.tracks()[1].title, "Song 4");
     }
 }

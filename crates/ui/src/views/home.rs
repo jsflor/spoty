@@ -2,8 +2,9 @@ use crate::navigation::Route;
 use crate::theme::{
     COLOR_ACCENT_GREEN, COLOR_BG_CARD, COLOR_BG_HIGHLIGHT, COLOR_TEXT_BASE, COLOR_TEXT_SUBDUED,
 };
+use crate::widgets::{TrackMenuActions, render_track_context_menu};
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, Vec2};
-use spoty_core::{Playlist, Track};
+use spoty_core::{Playlist, PlaylistId, Track, TrackId};
 use spoty_storage::Library;
 
 pub struct HomeView;
@@ -13,9 +14,14 @@ impl HomeView {
         ui: &mut egui::Ui,
         library: &Library,
         current_track_id: Option<&spoty_core::TrackId>,
+        is_track_fav: &impl Fn(&spoty_core::TrackId) -> bool,
         on_navigate: &mut impl FnMut(Route),
         on_play_track: &mut impl FnMut(Track),
         on_play_playlist: &mut impl FnMut(Playlist),
+        on_toggle_fav: &mut impl FnMut(TrackId),
+        on_add_to_queue: &mut impl FnMut(Track),
+        on_add_to_playlist: &mut impl FnMut(PlaylistId, TrackId),
+        on_create_playlist_with_track: &mut impl FnMut(TrackId),
     ) {
         let greeting = get_time_greeting();
 
@@ -259,6 +265,21 @@ impl HomeView {
                             if resp.clicked() {
                                 on_play_track(track.clone());
                             }
+
+                            let fav = is_track_fav(&track.id);
+                            let mut actions = TrackMenuActions {
+                                is_fav: fav,
+                                custom_playlists: &library.playlists,
+                                current_playlist_id: None,
+                                on_toggle_fav,
+                                on_add_to_queue,
+                                on_add_to_playlist,
+                                on_create_playlist_with_track,
+                                on_remove_from_playlist: None,
+                            };
+                            resp.context_menu(|ui| {
+                                render_track_context_menu(ui, track, &mut actions);
+                            });
 
                             ui.add_space(14.0);
                         }
