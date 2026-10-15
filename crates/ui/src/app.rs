@@ -341,6 +341,10 @@ impl eframe::App for SpotyApp {
         let state = self.controller.state();
         let is_playing = state.status == PlaybackStatus::Playing;
 
+        if is_playing || self.scrubbing_position.is_some() {
+            ctx.request_repaint_after(Duration::from_millis(16));
+        }
+
         // Top Panel: Navigation & Search
         egui::TopBottomPanel::top("top_bar")
             .frame(

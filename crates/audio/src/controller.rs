@@ -55,6 +55,9 @@ impl PlayerController {
     }
 
     pub fn seek(&self, position: Duration) {
+        if let Ok(mut lock) = self.cached_state.write() {
+            lock.position_secs = position.as_secs_f64();
+        }
         let _ = self.cmd_tx.send(PlayerCommand::Seek(position));
     }
 

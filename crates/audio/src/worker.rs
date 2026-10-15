@@ -101,6 +101,7 @@ impl AudioWorker {
                     PlayerCommand::Seek(pos) => {
                         let target_secs = pos.as_secs_f64().clamp(0.0, self.state.duration_secs);
                         self.state.position_secs = target_secs;
+                        let target_dur = Duration::from_secs_f64(target_secs);
 
                         if let (Some(handle), Some(bytes)) = (&stream_handle, &current_bytes) {
                             match Sink::try_new(handle) {
@@ -108,7 +109,6 @@ impl AudioWorker {
                                     let cursor = Cursor::new(bytes.clone());
                                     match Decoder::new(cursor) {
                                         Ok(decoder) => {
-                                            let target_dur = Duration::from_secs_f64(target_secs);
                                             let skipped = decoder.skip_duration(target_dur);
                                             new_sink.append(skipped);
                                             new_sink.set_volume(if self.state.is_muted {
