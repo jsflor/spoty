@@ -40,3 +40,10 @@ The UI SHALL provide an inline or dialog interface allowing users to rename exis
 #### Scenario: Renaming a playlist
 - **WHEN** the user selects "Rename" from the playlist context menu or options menu
 - **THEN** the user can edit the playlist title, and saving updates both SQLite and the UI immediately
+
+### Requirement: Home Multi-Section Horizontal Carousels
+The Home view SHALL render content sections (Featured Tracks, Playlists, Artists) as horizontally scrollable single-row carousels with header paging buttons (`‹` / `›`).
+
+#### Scenario: Scrolling home carousel
+- **WHEN** the user scrolls with a trackpad or clicks the header chevron buttons
+- **THEN** the corresponding section carousel scrolls horizontally without vertical card wrapping
