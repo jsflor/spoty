@@ -2,7 +2,7 @@ use eframe::egui;
 use spoty_audio::{
     AudioStreamReader, AudioStreamResolver, BoundedStreamReader, PlaybackSession, SessionEvent,
 };
-use spoty_core::{PlaybackStatus, Playlist, PlaylistId, Queue, Track};
+use spoty_core::{Artist, PlaybackStatus, Playlist, PlaylistId, Queue, Track};
 use spoty_storage::{
     Catalog, DemoProvider, MusicProvider, OpenDalProvider, S3Config, SpotifyConfig,
     SpotifyProvider, SubsonicConfig, SubsonicProvider,
@@ -47,6 +47,65 @@ pub enum SidebarCategory {
     Artists,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LibrarySortOrder {
+    #[default]
+    Recents,
+    Alphabetical,
+    RecentlyAdded,
+}
+
+pub fn playlist_timestamp(pl: &Playlist) -> u128 {
+    if let Some(ts_str) = pl.id.as_str().strip_prefix("custom_pl_") {
+        ts_str.parse::<u128>().unwrap_or(0)
+    } else {
+        0
+    }
+}
+
+pub fn filter_and_sort_playlists<'a>(
+    playlists: &'a [Playlist],
+    query: &str,
+    sort_order: LibrarySortOrder,
+) -> Vec<&'a Playlist> {
+    let q = query.trim().to_lowercase();
+    let mut filtered: Vec<&'a Playlist> = playlists
+        .iter()
+        .filter(|p| q.is_empty() || p.title.to_lowercase().contains(&q))
+        .collect();
+
+    match sort_order {
+        LibrarySortOrder::Recents => {}
+        LibrarySortOrder::Alphabetical => {
+            filtered.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+        }
+        LibrarySortOrder::RecentlyAdded => {
+            filtered.sort_by(|a, b| playlist_timestamp(b).cmp(&playlist_timestamp(a)));
+        }
+    }
+    filtered
+}
+
+pub fn filter_and_sort_artists<'a>(
+    artists: &'a [Artist],
+    query: &str,
+    sort_order: LibrarySortOrder,
+) -> Vec<&'a Artist> {
+    let q = query.trim().to_lowercase();
+    let mut filtered: Vec<&'a Artist> = artists
+        .iter()
+        .filter(|a| q.is_empty() || a.name.to_lowercase().contains(&q))
+        .collect();
+
+    match sort_order {
+        LibrarySortOrder::Recents | LibrarySortOrder::RecentlyAdded => {}
+        LibrarySortOrder::Alphabetical => {
+            filtered.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        }
+    }
+    filtered
+}
+
 #[derive(Debug, Clone)]
 pub struct PlaylistEditModal {
     pub id: PlaylistId,
@@ -67,6 +126,8 @@ pub struct SpotyApp {
     pending_delete_playlist: Option<Playlist>,
     editing_playlist: Option<PlaylistEditModal>,
     sidebar_category: Option<SidebarCategory>,
+    sidebar_search_query: String,
+    sidebar_sort_order: LibrarySortOrder,
     queue_drawer_open: bool,
     scrubbing_position: Option<f64>,
 }
@@ -133,6 +194,8 @@ impl SpotyApp {
             pending_delete_playlist: None,
             editing_playlist: None,
             sidebar_category: None,
+            sidebar_search_query: String::new(),
+            sidebar_sort_order: LibrarySortOrder::default(),
             queue_drawer_open: false,
             scrubbing_position: None,
         }
@@ -870,7 +933,109 @@ impl eframe::App for SpotyApp {
                             }
                         });
 
-                        ui.add_space(10.0);
+                        ui.add_space(8.0);
+
+                        // Search & Sort row
+                        ui.horizontal(|ui| {
+                            let avail_w = ui.available_width();
+                            let search_w = (avail_w - 95.0).max(60.0);
+
+                            egui::Frame::new()
+                                .fill(COLOR_BG_CARD)
+                                .corner_radius(egui::CornerRadius::same(12))
+                                .inner_margin(egui::Margin::symmetric(6, 4))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            egui::RichText::new("🔍")
+                                                .size(11.0)
+                                                .color(COLOR_TEXT_SUBDUED),
+                                        );
+                                        let text_w = if self.sidebar_search_query.is_empty() {
+                                            (search_w - 32.0).max(40.0)
+                                        } else {
+                                            (search_w - 48.0).max(24.0)
+                                        };
+                                        let edit = egui::TextEdit::singleline(
+                                            &mut self.sidebar_search_query,
+                                        )
+                                        .hint_text("Search in Your Library")
+                                        .desired_width(text_w)
+                                        .frame(false);
+                                        ui.add(edit);
+
+                                        if !self.sidebar_search_query.is_empty() {
+                                            if ui
+                                                .small_button(
+                                                    egui::RichText::new("✕")
+                                                        .size(9.0)
+                                                        .color(COLOR_TEXT_SUBDUED),
+                                                )
+                                                .clicked()
+                                            {
+                                                self.sidebar_search_query.clear();
+                                            }
+                                        }
+                                    });
+                                });
+
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    let sort_label = match self.sidebar_sort_order {
+                                        LibrarySortOrder::Recents => "Recents ▾",
+                                        LibrarySortOrder::RecentlyAdded => "Recently Added ▾",
+                                        LibrarySortOrder::Alphabetical => "Alphabetical ▾",
+                                    };
+
+                                    ui.menu_button(
+                                        egui::RichText::new(sort_label)
+                                            .size(11.0)
+                                            .color(COLOR_TEXT_SUBDUED),
+                                        |ui| {
+                                            ui.set_min_width(130.0);
+                                            if ui
+                                                .selectable_label(
+                                                    self.sidebar_sort_order
+                                                        == LibrarySortOrder::Recents,
+                                                    "Recents",
+                                                )
+                                                .clicked()
+                                            {
+                                                self.sidebar_sort_order = LibrarySortOrder::Recents;
+                                                ui.close_menu();
+                                            }
+                                            if ui
+                                                .selectable_label(
+                                                    self.sidebar_sort_order
+                                                        == LibrarySortOrder::RecentlyAdded,
+                                                    "Recently Added",
+                                                )
+                                                .clicked()
+                                            {
+                                                self.sidebar_sort_order =
+                                                    LibrarySortOrder::RecentlyAdded;
+                                                ui.close_menu();
+                                            }
+                                            if ui
+                                                .selectable_label(
+                                                    self.sidebar_sort_order
+                                                        == LibrarySortOrder::Alphabetical,
+                                                    "Alphabetical (A–Z)",
+                                                )
+                                                .clicked()
+                                            {
+                                                self.sidebar_sort_order =
+                                                    LibrarySortOrder::Alphabetical;
+                                                ui.close_menu();
+                                            }
+                                        },
+                                    );
+                                },
+                            );
+                        });
+
+                        ui.add_space(6.0);
 
                         let mut sidebar_delete = None;
                         let mut sidebar_rename = None;
@@ -878,146 +1043,172 @@ impl eframe::App for SpotyApp {
                         let fav_count = self.catalog.get_favorites().len();
 
                         egui::ScrollArea::vertical().show(ui, |ui| {
+                            let query = self.sidebar_search_query.trim().to_lowercase();
+
                             // Pinned: Liked Songs & All Songs
                             if self.sidebar_category.is_none()
                                 || self.sidebar_category == Some(SidebarCategory::Playlists)
                             {
-                                // Pinned: Liked Songs
-                                let (liked_rect, liked_resp) = ui.allocate_exact_size(
-                                    egui::vec2(ui.available_width(), 52.0),
-                                    egui::Sense::click(),
-                                );
-                                if ui.is_rect_visible(liked_rect) {
-                                    let p = ui.painter();
-                                    let is_active = current_route == Route::LikedSongs;
-                                    let bg = if is_active || liked_resp.hovered() {
-                                        COLOR_BG_HIGHLIGHT
-                                    } else {
-                                        egui::Color32::TRANSPARENT
-                                    };
-                                    p.rect_filled(liked_rect, egui::CornerRadius::same(6), bg);
+                                let show_liked = query.is_empty() || "liked songs".contains(&query);
+                                let show_all = query.is_empty() || "all songs".contains(&query);
 
-                                    let thumb_rect = egui::Rect::from_min_size(
-                                        egui::pos2(liked_rect.left() + 6.0, liked_rect.top() + 6.0),
-                                        egui::vec2(40.0, 40.0),
+                                if show_liked {
+                                    // Pinned: Liked Songs
+                                    let (liked_rect, liked_resp) = ui.allocate_exact_size(
+                                        egui::vec2(ui.available_width(), 52.0),
+                                        egui::Sense::click(),
                                     );
-                                    p.rect_filled(
-                                        thumb_rect,
-                                        egui::CornerRadius::same(4),
-                                        egui::Color32::from_rgb(0x45, 0x0a, 0xa5),
-                                    );
-                                    p.text(
-                                        thumb_rect.center(),
-                                        egui::Align2::CENTER_CENTER,
-                                        "♥",
-                                        egui::FontId::proportional(18.0),
-                                        egui::Color32::WHITE,
-                                    );
+                                    if ui.is_rect_visible(liked_rect) {
+                                        let p = ui.painter();
+                                        let is_active = current_route == Route::LikedSongs;
+                                        let bg = if is_active || liked_resp.hovered() {
+                                            COLOR_BG_HIGHLIGHT
+                                        } else {
+                                            egui::Color32::TRANSPARENT
+                                        };
+                                        p.rect_filled(liked_rect, egui::CornerRadius::same(6), bg);
 
-                                    let title_col = if is_active {
-                                        COLOR_ACCENT_GREEN
-                                    } else {
-                                        COLOR_TEXT_BASE
-                                    };
-                                    p.text(
-                                        egui::pos2(
-                                            liked_rect.left() + 54.0,
-                                            liked_rect.top() + 14.0,
-                                        ),
-                                        egui::Align2::LEFT_TOP,
-                                        "Liked Songs",
-                                        egui::FontId::proportional(13.0),
-                                        title_col,
-                                    );
-                                    p.text(
-                                        egui::pos2(
-                                            liked_rect.left() + 54.0,
-                                            liked_rect.top() + 30.0,
-                                        ),
-                                        egui::Align2::LEFT_TOP,
-                                        format!("📌 Playlist • {} songs", fav_count),
-                                        egui::FontId::proportional(11.0),
-                                        COLOR_TEXT_SUBDUED,
-                                    );
-                                }
-                                if liked_resp.clicked() {
-                                    self.nav.push(Route::LikedSongs);
-                                }
+                                        let thumb_rect = egui::Rect::from_min_size(
+                                            egui::pos2(
+                                                liked_rect.left() + 6.0,
+                                                liked_rect.top() + 6.0,
+                                            ),
+                                            egui::vec2(40.0, 40.0),
+                                        );
+                                        p.rect_filled(
+                                            thumb_rect,
+                                            egui::CornerRadius::same(4),
+                                            egui::Color32::from_rgb(0x45, 0x0a, 0xa5),
+                                        );
+                                        p.text(
+                                            thumb_rect.center(),
+                                            egui::Align2::CENTER_CENTER,
+                                            "♥",
+                                            egui::FontId::proportional(18.0),
+                                            egui::Color32::WHITE,
+                                        );
 
-                                // Pinned: All Songs
-                                let (all_rect, all_resp) = ui.allocate_exact_size(
-                                    egui::vec2(ui.available_width(), 52.0),
-                                    egui::Sense::click(),
-                                );
-                                if ui.is_rect_visible(all_rect) {
-                                    let p = ui.painter();
-                                    let is_active = current_route == Route::AllSongs;
-                                    let bg = if is_active || all_resp.hovered() {
-                                        COLOR_BG_HIGHLIGHT
-                                    } else {
-                                        egui::Color32::TRANSPARENT
-                                    };
-                                    p.rect_filled(all_rect, egui::CornerRadius::same(6), bg);
-
-                                    let thumb_rect = egui::Rect::from_min_size(
-                                        egui::pos2(all_rect.left() + 6.0, all_rect.top() + 6.0),
-                                        egui::vec2(40.0, 40.0),
-                                    );
-                                    p.rect_filled(
-                                        thumb_rect,
-                                        egui::CornerRadius::same(4),
-                                        egui::Color32::from_rgb(0x1a, 0x38, 0x46),
-                                    );
-                                    p.text(
-                                        thumb_rect.center(),
-                                        egui::Align2::CENTER_CENTER,
-                                        "🎵",
-                                        egui::FontId::proportional(18.0),
-                                        egui::Color32::WHITE,
-                                    );
-
-                                    let title_col = if is_active {
-                                        COLOR_ACCENT_GREEN
-                                    } else {
-                                        COLOR_TEXT_BASE
-                                    };
-                                    p.text(
-                                        egui::pos2(all_rect.left() + 54.0, all_rect.top() + 14.0),
-                                        egui::Align2::LEFT_TOP,
-                                        "All Songs",
-                                        egui::FontId::proportional(13.0),
-                                        title_col,
-                                    );
-                                    p.text(
-                                        egui::pos2(all_rect.left() + 54.0, all_rect.top() + 30.0),
-                                        egui::Align2::LEFT_TOP,
-                                        format!("Tracks • {} tracks", library.tracks.len()),
-                                        egui::FontId::proportional(11.0),
-                                        COLOR_TEXT_SUBDUED,
-                                    );
-                                }
-                                if all_resp.clicked() {
-                                    self.nav.push(Route::AllSongs);
+                                        let title_col = if is_active {
+                                            COLOR_ACCENT_GREEN
+                                        } else {
+                                            COLOR_TEXT_BASE
+                                        };
+                                        p.text(
+                                            egui::pos2(
+                                                liked_rect.left() + 54.0,
+                                                liked_rect.top() + 14.0,
+                                            ),
+                                            egui::Align2::LEFT_TOP,
+                                            "Liked Songs",
+                                            egui::FontId::proportional(13.0),
+                                            title_col,
+                                        );
+                                        p.text(
+                                            egui::pos2(
+                                                liked_rect.left() + 54.0,
+                                                liked_rect.top() + 30.0,
+                                            ),
+                                            egui::Align2::LEFT_TOP,
+                                            format!("📌 Playlist • {} songs", fav_count),
+                                            egui::FontId::proportional(11.0),
+                                            COLOR_TEXT_SUBDUED,
+                                        );
+                                    }
+                                    if liked_resp.clicked() {
+                                        self.nav.push(Route::LikedSongs);
+                                    }
                                 }
 
-                                // Divider
-                                let (div_rect, _) = ui.allocate_exact_size(
-                                    egui::vec2(ui.available_width(), 8.0),
-                                    egui::Sense::hover(),
-                                );
-                                ui.painter().line_segment(
-                                    [
-                                        egui::pos2(div_rect.left() + 8.0, div_rect.center().y),
-                                        egui::pos2(div_rect.right() - 8.0, div_rect.center().y),
-                                    ],
-                                    egui::Stroke::new(1.0_f32, COLOR_DIVIDER),
-                                );
+                                if show_all {
+                                    // Pinned: All Songs
+                                    let (all_rect, all_resp) = ui.allocate_exact_size(
+                                        egui::vec2(ui.available_width(), 52.0),
+                                        egui::Sense::click(),
+                                    );
+                                    if ui.is_rect_visible(all_rect) {
+                                        let p = ui.painter();
+                                        let is_active = current_route == Route::AllSongs;
+                                        let bg = if is_active || all_resp.hovered() {
+                                            COLOR_BG_HIGHLIGHT
+                                        } else {
+                                            egui::Color32::TRANSPARENT
+                                        };
+                                        p.rect_filled(all_rect, egui::CornerRadius::same(6), bg);
+
+                                        let thumb_rect = egui::Rect::from_min_size(
+                                            egui::pos2(all_rect.left() + 6.0, all_rect.top() + 6.0),
+                                            egui::vec2(40.0, 40.0),
+                                        );
+                                        p.rect_filled(
+                                            thumb_rect,
+                                            egui::CornerRadius::same(4),
+                                            egui::Color32::from_rgb(0x1a, 0x38, 0x46),
+                                        );
+                                        p.text(
+                                            thumb_rect.center(),
+                                            egui::Align2::CENTER_CENTER,
+                                            "🎵",
+                                            egui::FontId::proportional(18.0),
+                                            egui::Color32::WHITE,
+                                        );
+
+                                        let title_col = if is_active {
+                                            COLOR_ACCENT_GREEN
+                                        } else {
+                                            COLOR_TEXT_BASE
+                                        };
+                                        p.text(
+                                            egui::pos2(
+                                                all_rect.left() + 54.0,
+                                                all_rect.top() + 14.0,
+                                            ),
+                                            egui::Align2::LEFT_TOP,
+                                            "All Songs",
+                                            egui::FontId::proportional(13.0),
+                                            title_col,
+                                        );
+                                        p.text(
+                                            egui::pos2(
+                                                all_rect.left() + 54.0,
+                                                all_rect.top() + 30.0,
+                                            ),
+                                            egui::Align2::LEFT_TOP,
+                                            format!("Tracks • {} tracks", library.tracks.len()),
+                                            egui::FontId::proportional(11.0),
+                                            COLOR_TEXT_SUBDUED,
+                                        );
+                                    }
+                                    if all_resp.clicked() {
+                                        self.nav.push(Route::AllSongs);
+                                    }
+                                }
+
+                                if show_liked || show_all {
+                                    // Divider
+                                    let (div_rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(ui.available_width(), 8.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().line_segment(
+                                        [
+                                            egui::pos2(div_rect.left() + 8.0, div_rect.center().y),
+                                            egui::pos2(div_rect.right() - 8.0, div_rect.center().y),
+                                        ],
+                                        egui::Stroke::new(1.0_f32, COLOR_DIVIDER),
+                                    );
+                                }
                             }
 
                             if self.sidebar_category.is_none()
                                 || self.sidebar_category == Some(SidebarCategory::Playlists)
                             {
-                                for playlist in &library.playlists {
+                                let filtered_playlists = filter_and_sort_playlists(
+                                    &library.playlists,
+                                    &self.sidebar_search_query,
+                                    self.sidebar_sort_order,
+                                );
+
+                                for playlist in filtered_playlists {
                                     let (rect, resp) = ui.allocate_exact_size(
                                         egui::vec2(ui.available_width(), 52.0),
                                         egui::Sense::click(),
@@ -1111,51 +1302,63 @@ impl eframe::App for SpotyApp {
                                 || self.sidebar_category == Some(SidebarCategory::Artists))
                                 && !library.artists.is_empty()
                             {
-                                ui.add_space(8.0);
-                                ui.label(
-                                    egui::RichText::new("Artists")
-                                        .size(12.0)
-                                        .color(COLOR_TEXT_SUBDUED),
+                                let filtered_artists = filter_and_sort_artists(
+                                    &library.artists,
+                                    &self.sidebar_search_query,
+                                    self.sidebar_sort_order,
                                 );
 
-                                for artist in &library.artists {
-                                    let (rect, resp) = ui.allocate_exact_size(
-                                        egui::vec2(ui.available_width(), 44.0),
-                                        egui::Sense::click(),
+                                if !filtered_artists.is_empty() {
+                                    ui.add_space(8.0);
+                                    ui.label(
+                                        egui::RichText::new("Artists")
+                                            .size(12.0)
+                                            .color(COLOR_TEXT_SUBDUED),
                                     );
-                                    if ui.is_rect_visible(rect) {
-                                        let p = ui.painter();
-                                        let bg = if resp.hovered() {
-                                            COLOR_BG_HIGHLIGHT
-                                        } else {
-                                            egui::Color32::TRANSPARENT
-                                        };
-                                        p.rect_filled(rect, egui::CornerRadius::same(6), bg);
 
-                                        let avatar_rect = egui::Rect::from_min_size(
-                                            egui::pos2(rect.left() + 6.0, rect.top() + 6.0),
-                                            egui::vec2(32.0, 32.0),
+                                    for artist in filtered_artists {
+                                        let (rect, resp) = ui.allocate_exact_size(
+                                            egui::vec2(ui.available_width(), 44.0),
+                                            egui::Sense::click(),
                                         );
-                                        p.circle_filled(avatar_rect.center(), 16.0, COLOR_BG_CARD);
-                                        p.text(
-                                            avatar_rect.center(),
-                                            egui::Align2::CENTER_CENTER,
-                                            "👤",
-                                            egui::FontId::proportional(15.0),
-                                            COLOR_TEXT_SUBDUED,
-                                        );
+                                        if ui.is_rect_visible(rect) {
+                                            let p = ui.painter();
+                                            let bg = if resp.hovered() {
+                                                COLOR_BG_HIGHLIGHT
+                                            } else {
+                                                egui::Color32::TRANSPARENT
+                                            };
+                                            p.rect_filled(rect, egui::CornerRadius::same(6), bg);
 
-                                        p.text(
-                                            egui::pos2(rect.left() + 48.0, rect.top() + 14.0),
-                                            egui::Align2::LEFT_TOP,
-                                            &artist.name,
-                                            egui::FontId::proportional(13.0),
-                                            COLOR_TEXT_BASE,
-                                        );
-                                    }
+                                            let avatar_rect = egui::Rect::from_min_size(
+                                                egui::pos2(rect.left() + 6.0, rect.top() + 6.0),
+                                                egui::vec2(32.0, 32.0),
+                                            );
+                                            p.circle_filled(
+                                                avatar_rect.center(),
+                                                16.0,
+                                                COLOR_BG_CARD,
+                                            );
+                                            p.text(
+                                                avatar_rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                "👤",
+                                                egui::FontId::proportional(15.0),
+                                                COLOR_TEXT_SUBDUED,
+                                            );
 
-                                    if resp.clicked() {
-                                        self.nav.push(Route::Artist(artist.id.clone()));
+                                            p.text(
+                                                egui::pos2(rect.left() + 48.0, rect.top() + 14.0),
+                                                egui::Align2::LEFT_TOP,
+                                                &artist.name,
+                                                egui::FontId::proportional(13.0),
+                                                COLOR_TEXT_BASE,
+                                            );
+                                        }
+
+                                        if resp.clicked() {
+                                            self.nav.push(Route::Artist(artist.id.clone()));
+                                        }
                                     }
                                 }
                             }
@@ -1749,5 +1952,147 @@ impl eframe::App for SpotyApp {
                 self.editing_playlist = Some(edit);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use spoty_core::{Artist, ArtistId, Playlist, PlaylistId};
+
+    #[test]
+    fn test_library_sort_order_default() {
+        assert_eq!(LibrarySortOrder::default(), LibrarySortOrder::Recents);
+    }
+
+    #[test]
+    fn test_filter_and_sort_playlists_filtering() {
+        let p1 = Playlist {
+            id: PlaylistId::new("pl_1"),
+            title: "Synthwave Essentials".into(),
+            description: None,
+            cover_uri: None,
+            track_ids: vec![],
+        };
+        let p2 = Playlist {
+            id: PlaylistId::new("pl_2"),
+            title: "Rock Classics".into(),
+            description: None,
+            cover_uri: None,
+            track_ids: vec![],
+        };
+        let playlists = vec![p1, p2];
+
+        // Case-insensitive match
+        let filtered = filter_and_sort_playlists(&playlists, "synth", LibrarySortOrder::Recents);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].title, "Synthwave Essentials");
+
+        // Non-match
+        let empty = filter_and_sort_playlists(&playlists, "jazz", LibrarySortOrder::Recents);
+        assert!(empty.is_empty());
+
+        // Empty query returns all
+        let all = filter_and_sort_playlists(&playlists, "", LibrarySortOrder::Recents);
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_sort_playlists_alphabetical() {
+        let p1 = Playlist {
+            id: PlaylistId::new("pl_1"),
+            title: "Zebra Tracks".into(),
+            description: None,
+            cover_uri: None,
+            track_ids: vec![],
+        };
+        let p2 = Playlist {
+            id: PlaylistId::new("pl_2"),
+            title: "Alpha Beats".into(),
+            description: None,
+            cover_uri: None,
+            track_ids: vec![],
+        };
+        let p3 = Playlist {
+            id: PlaylistId::new("pl_3"),
+            title: "chill vibes".into(),
+            description: None,
+            cover_uri: None,
+            track_ids: vec![],
+        };
+        let playlists = vec![p1, p2, p3];
+
+        let sorted = filter_and_sort_playlists(&playlists, "", LibrarySortOrder::Alphabetical);
+        assert_eq!(sorted[0].title, "Alpha Beats");
+        assert_eq!(sorted[1].title, "chill vibes");
+        assert_eq!(sorted[2].title, "Zebra Tracks");
+    }
+
+    #[test]
+    fn test_sort_playlists_recently_added() {
+        let p1 = Playlist {
+            id: PlaylistId::new("custom_pl_1000"),
+            title: "Older Playlist".into(),
+            description: None,
+            cover_uri: None,
+            track_ids: vec![],
+        };
+        let p2 = Playlist {
+            id: PlaylistId::new("custom_pl_5000"),
+            title: "Newer Playlist".into(),
+            description: None,
+            cover_uri: None,
+            track_ids: vec![],
+        };
+        let p3 = Playlist {
+            id: PlaylistId::new("custom_pl_3000"),
+            title: "Middle Playlist".into(),
+            description: None,
+            cover_uri: None,
+            track_ids: vec![],
+        };
+        let p_builtin = Playlist {
+            id: PlaylistId::new("demo_pl_default"),
+            title: "Built-in".into(),
+            description: None,
+            cover_uri: None,
+            track_ids: vec![],
+        };
+        let playlists = vec![p1, p2, p3, p_builtin];
+
+        let sorted = filter_and_sort_playlists(&playlists, "", LibrarySortOrder::RecentlyAdded);
+        assert_eq!(sorted[0].id.as_str(), "custom_pl_5000");
+        assert_eq!(sorted[1].id.as_str(), "custom_pl_3000");
+        assert_eq!(sorted[2].id.as_str(), "custom_pl_1000");
+        assert_eq!(sorted[3].id.as_str(), "demo_pl_default");
+    }
+
+    #[test]
+    fn test_filter_and_sort_artists() {
+        let a1 = Artist {
+            id: ArtistId::new("art_1"),
+            name: "The Midnight".into(),
+            avatar_uri: None,
+        };
+        let a2 = Artist {
+            id: ArtistId::new("art_2"),
+            name: "Gunship".into(),
+            avatar_uri: None,
+        };
+        let a3 = Artist {
+            id: ArtistId::new("art_3"),
+            name: "FM-84".into(),
+            avatar_uri: None,
+        };
+        let artists = vec![a1, a2, a3];
+
+        let filtered = filter_and_sort_artists(&artists, "night", LibrarySortOrder::Recents);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].name, "The Midnight");
+
+        let sorted = filter_and_sort_artists(&artists, "", LibrarySortOrder::Alphabetical);
+        assert_eq!(sorted[0].name, "FM-84");
+        assert_eq!(sorted[1].name, "Gunship");
+        assert_eq!(sorted[2].name, "The Midnight");
     }
 }
