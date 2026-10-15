@@ -2,27 +2,15 @@ use crate::navigation::Route;
 use crate::theme::{
     COLOR_ACCENT_GREEN, COLOR_BG_CARD, COLOR_BG_HIGHLIGHT, COLOR_TEXT_BASE, COLOR_TEXT_SUBDUED,
 };
-use crate::widgets::{TrackMenuActions, render_track_context_menu};
+use crate::views::{ViewAction, ViewContext};
+use crate::widgets::render_track_context_menu;
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, Vec2};
-use spoty_core::{Playlist, PlaylistId, Track, TrackId};
-use spoty_storage::Library;
 
 pub struct HomeView;
 
 impl HomeView {
-    pub fn show(
-        ui: &mut egui::Ui,
-        library: &Library,
-        current_track_id: Option<&spoty_core::TrackId>,
-        is_track_fav: &impl Fn(&spoty_core::TrackId) -> bool,
-        on_navigate: &mut impl FnMut(Route),
-        on_play_track: &mut impl FnMut(Track),
-        on_play_playlist: &mut impl FnMut(Playlist),
-        on_toggle_fav: &mut impl FnMut(TrackId),
-        on_add_to_queue: &mut impl FnMut(Track),
-        on_add_to_playlist: &mut impl FnMut(PlaylistId, TrackId),
-        on_create_playlist_with_track: &mut impl FnMut(TrackId),
-    ) {
+    pub fn show(ui: &mut egui::Ui, ctx: &ViewContext<'_>) -> Option<ViewAction> {
+        let mut action = None;
         let greeting = get_time_greeting();
 
         // Hero Greeting
@@ -36,7 +24,7 @@ impl HomeView {
         ui.add_space(18.0);
 
         // Spotify's 2-column or 3-column "Quick Play" rectangular cards (capped to first 6)
-        if !library.playlists.is_empty() {
+        if !ctx.library.playlists.is_empty() {
             let available_w = ui.available_width();
             let num_cols = if available_w > 900.0 { 3 } else { 2 };
             let card_w =
@@ -45,7 +33,7 @@ impl HomeView {
             egui::Grid::new("quick_play_grid")
                 .spacing([12.0, 12.0])
                 .show(ui, |ui| {
-                    for (i, playlist) in library.playlists.iter().take(6).enumerate() {
+                    for (i, playlist) in ctx.library.playlists.iter().take(6).enumerate() {
                         let (rect, resp) =
                             ui.allocate_exact_size(Vec2::new(card_w, 64.0), Sense::click());
 
@@ -134,12 +122,21 @@ impl HomeView {
                             if let Some(pos) = resp.interact_pointer_pos() {
                                 let btn_center = Pos2::new(rect.max.x - 28.0, rect.center().y);
                                 if pos.distance(btn_center) <= 20.0 {
-                                    on_play_playlist(playlist.clone());
+                                    let tracks: Vec<_> = playlist
+                                        .track_ids
+                                        .iter()
+                                        .filter_map(|id| {
+                                            ctx.library.tracks.iter().find(|t| &t.id == id).cloned()
+                                        })
+                                        .collect();
+                                    action = Some(ViewAction::PlayAll(tracks));
                                     played = true;
                                 }
                             }
                             if !played {
-                                on_navigate(Route::Playlist(playlist.id.clone()));
+                                action = Some(ViewAction::Navigate(Route::Playlist(
+                                    playlist.id.clone(),
+                                )));
                             }
                         }
 
@@ -153,7 +150,7 @@ impl HomeView {
         }
 
         // Section 1: "Featured & Made For You" (Tracks Carousel)
-        if !library.tracks.is_empty() {
+        if !ctx.library.tracks.is_empty() {
             let (prev_trk, next_trk) = render_carousel_header(ui, "Featured & Made For You");
             ui.add_space(14.0);
 
@@ -174,8 +171,8 @@ impl HomeView {
                     ui.horizontal(|ui| {
                         let card_size = Vec2::new(180.0, 246.0);
 
-                        for track in &library.tracks {
-                            let is_current = current_track_id == Some(&track.id);
+                        for track in &ctx.library.tracks {
+                            let is_current = ctx.current_track_id == Some(&track.id);
                             let (rect, resp) = ui.allocate_exact_size(card_size, Sense::click());
 
                             if ui.is_rect_visible(rect) {
@@ -263,22 +260,20 @@ impl HomeView {
                             }
 
                             if resp.clicked() {
-                                on_play_track(track.clone());
+                                action = Some(ViewAction::PlayTrack(track.clone()));
                             }
 
-                            let fav = is_track_fav(&track.id);
-                            let mut actions = TrackMenuActions {
-                                is_fav: fav,
-                                custom_playlists: &library.playlists,
-                                current_playlist_id: None,
-                                on_toggle_fav,
-                                on_add_to_queue,
-                                on_add_to_playlist,
-                                on_create_playlist_with_track,
-                                on_remove_from_playlist: None,
-                            };
+                            let fav = (ctx.is_favorite)(&track.id);
                             resp.context_menu(|ui| {
-                                render_track_context_menu(ui, track, &mut actions);
+                                if let Some(act) = render_track_context_menu(
+                                    ui,
+                                    track,
+                                    &ctx.library.playlists,
+                                    None,
+                                    fav,
+                                ) {
+                                    action = Some(act);
+                                }
                             });
 
                             ui.add_space(14.0);
@@ -290,7 +285,7 @@ impl HomeView {
         }
 
         // Section 2: "Your Playlists & Mixes" (Playlists Carousel)
-        if !library.playlists.is_empty() {
+        if !ctx.library.playlists.is_empty() {
             ui.add_space(28.0);
             let (prev_pl, next_pl) = render_carousel_header(ui, "Your Playlists & Mixes");
             ui.add_space(14.0);
@@ -311,7 +306,7 @@ impl HomeView {
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         let card_size = Vec2::new(180.0, 246.0);
-                        for playlist in &library.playlists {
+                        for playlist in &ctx.library.playlists {
                             let (rect, resp) = ui.allocate_exact_size(card_size, Sense::click());
                             if ui.is_rect_visible(rect) {
                                 let p = ui.painter();
@@ -399,12 +394,25 @@ impl HomeView {
                                     let btn_center =
                                         Pos2::new(cover_max.x - 22.0, cover_max.y - 22.0);
                                     if pos.distance(btn_center) <= 22.0 {
-                                        on_play_playlist(playlist.clone());
+                                        let tracks: Vec<_> = playlist
+                                            .track_ids
+                                            .iter()
+                                            .filter_map(|id| {
+                                                ctx.library
+                                                    .tracks
+                                                    .iter()
+                                                    .find(|t| &t.id == id)
+                                                    .cloned()
+                                            })
+                                            .collect();
+                                        action = Some(ViewAction::PlayAll(tracks));
                                         played = true;
                                     }
                                 }
                                 if !played {
-                                    on_navigate(Route::Playlist(playlist.id.clone()));
+                                    action = Some(ViewAction::Navigate(Route::Playlist(
+                                        playlist.id.clone(),
+                                    )));
                                 }
                             }
 
@@ -417,7 +425,7 @@ impl HomeView {
         }
 
         // Section 3: "Artists You Might Like" (Artists Carousel)
-        if !library.artists.is_empty() {
+        if !ctx.library.artists.is_empty() {
             ui.add_space(28.0);
             let (prev_art, next_art) = render_carousel_header(ui, "Artists You Might Like");
             ui.add_space(14.0);
@@ -438,7 +446,7 @@ impl HomeView {
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         let card_size = Vec2::new(160.0, 210.0);
-                        for artist in &library.artists {
+                        for artist in &ctx.library.artists {
                             let (rect, resp) = ui.allocate_exact_size(card_size, Sense::click());
                             if ui.is_rect_visible(rect) {
                                 let p = ui.painter();
@@ -506,6 +514,7 @@ impl HomeView {
         }
 
         ui.add_space(24.0);
+        action
     }
 }
 
@@ -570,6 +579,5 @@ fn render_carousel_header(ui: &mut egui::Ui, title: &str) -> (bool, bool) {
 }
 
 fn get_time_greeting() -> &'static str {
-    // Current hour approximation or dynamic greeting
     "Good evening"
 }

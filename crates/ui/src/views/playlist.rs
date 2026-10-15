@@ -2,37 +2,26 @@ use crate::theme::{
     COLOR_ACCENT_GREEN, COLOR_BG_CARD, COLOR_BG_HIGHLIGHT, COLOR_DIVIDER, COLOR_TEXT_BASE,
     COLOR_TEXT_SUBDUED,
 };
-use crate::widgets::{
-    TrackMenuActions, draw_close_icon, play_circle_button, render_track_context_menu,
-};
+use crate::views::{ViewAction, ViewContext};
+use crate::widgets::{draw_close_icon, play_circle_button, render_track_context_menu};
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, Vec2};
-use spoty_core::{PlaylistId, Track, TrackId};
-use spoty_storage::Library;
+use spoty_core::{PlaylistId, Track};
 
 pub struct PlaylistView;
 
 impl PlaylistView {
     pub fn show(
         ui: &mut egui::Ui,
-        library: &Library,
+        ctx: &ViewContext<'_>,
         playlist_id: &PlaylistId,
-        current_track_id: Option<&spoty_core::TrackId>,
-        is_track_fav: &impl Fn(&spoty_core::TrackId) -> bool,
-        on_toggle_fav: &mut impl FnMut(spoty_core::TrackId),
-        on_play_track: &mut impl FnMut(Track),
-        on_play_all: &mut impl FnMut(Vec<Track>),
-        on_edit_details: &mut impl FnMut(PlaylistId),
-        on_delete_playlist: &mut impl FnMut(PlaylistId),
-        on_remove_track: &mut impl FnMut(PlaylistId, TrackId),
-        on_add_to_queue: &mut impl FnMut(Track),
-        on_add_to_playlist: &mut impl FnMut(PlaylistId, TrackId),
-        on_create_playlist_with_track: &mut impl FnMut(TrackId),
-    ) {
-        let playlist = match library.playlists.iter().find(|p| &p.id == playlist_id) {
+    ) -> Option<ViewAction> {
+        let mut action = None;
+
+        let playlist = match ctx.library.playlists.iter().find(|p| &p.id == playlist_id) {
             Some(p) => p,
             None => {
                 ui.label(egui::RichText::new("Playlist not found").color(COLOR_TEXT_SUBDUED));
-                return;
+                return None;
             }
         };
 
@@ -40,7 +29,7 @@ impl PlaylistView {
         let tracks: Vec<Track> = playlist
             .track_ids
             .iter()
-            .filter_map(|id| library.tracks.iter().find(|t| &t.id == id).cloned())
+            .filter_map(|id| ctx.library.tracks.iter().find(|t| &t.id == id).cloned())
             .collect();
 
         let total_duration_secs: u32 = tracks.iter().map(|t| t.duration_secs).sum();
@@ -145,7 +134,7 @@ impl PlaylistView {
                 .on_hover_text("Play Playlist")
                 .clicked()
             {
-                on_play_all(tracks.clone());
+                action = Some(ViewAction::PlayAll(tracks.clone()));
             }
 
             ui.add_space(16.0);
@@ -158,7 +147,7 @@ impl PlaylistView {
                     ui.set_min_width(140.0);
                     if is_custom {
                         if ui.button("✏  Edit details").clicked() {
-                            on_edit_details(playlist.id.clone());
+                            action = Some(ViewAction::EditPlaylist(playlist.id.clone()));
                             ui.close_menu();
                         }
                         if ui
@@ -168,7 +157,7 @@ impl PlaylistView {
                             )
                             .clicked()
                         {
-                            on_delete_playlist(playlist.id.clone());
+                            action = Some(ViewAction::DeletePlaylist(playlist.id.clone()));
                             ui.close_menu();
                         }
                     } else {
@@ -235,7 +224,7 @@ impl PlaylistView {
 
         // 4. Interactive Track List Rows
         for (index, track) in tracks.iter().enumerate() {
-            let is_current = current_track_id == Some(&track.id);
+            let is_current = ctx.current_track_id == Some(&track.id);
             let row_height = 54.0;
             let (row_rect, row_resp) =
                 ui.allocate_exact_size(Vec2::new(table_width, row_height), Sense::click());
@@ -341,24 +330,21 @@ impl PlaylistView {
             }
 
             if row_resp.clicked() {
-                on_play_track(track.clone());
+                action = Some(ViewAction::PlayTrack(track.clone()));
             }
 
-            let fav = is_track_fav(&track.id);
-
-            let mut actions = TrackMenuActions {
-                is_fav: fav,
-                custom_playlists: &library.playlists,
-                current_playlist_id: Some(playlist_id),
-                on_toggle_fav,
-                on_add_to_queue,
-                on_add_to_playlist,
-                on_create_playlist_with_track,
-                on_remove_from_playlist: Some(on_remove_track),
-            };
+            let fav = (ctx.is_favorite)(&track.id);
 
             row_resp.context_menu(|ui| {
-                render_track_context_menu(ui, track, &mut actions);
+                if let Some(act) = render_track_context_menu(
+                    ui,
+                    track,
+                    &ctx.library.playlists,
+                    Some(playlist_id),
+                    fav,
+                ) {
+                    action = Some(act);
+                }
             });
 
             // Remove button for custom playlists
@@ -382,7 +368,10 @@ impl PlaylistView {
                     .on_hover_text("Remove from this playlist")
                     .clicked()
                 {
-                    on_remove_track(playlist.id.clone(), track.id.clone());
+                    action = Some(ViewAction::RemoveTrackFromPlaylist(
+                        playlist.id.clone(),
+                        track.id.clone(),
+                    ));
                 }
             }
 
@@ -413,10 +402,12 @@ impl PlaylistView {
                 }
             }
             if heart_resp.clicked() {
-                on_toggle_fav(track.id.clone());
+                action = Some(ViewAction::ToggleFavorite(track.id.clone()));
             }
 
             ui.add_space(2.0);
         }
+
+        action
     }
 }

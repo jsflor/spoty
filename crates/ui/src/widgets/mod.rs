@@ -5,5 +5,5 @@ pub mod visualizer;
 
 pub use icons::*;
 pub use slider::SpotifySlider;
-pub use track_menu::{TrackMenuActions, render_track_context_menu};
+pub use track_menu::render_track_context_menu;
 pub use visualizer::VisualizerWidget;

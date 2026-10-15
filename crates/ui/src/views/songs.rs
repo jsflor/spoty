@@ -2,12 +2,10 @@ use crate::theme::{
     COLOR_ACCENT_GREEN, COLOR_BG_CARD, COLOR_BG_ELEVATED, COLOR_BG_HIGHLIGHT, COLOR_DIVIDER,
     COLOR_TEXT_BASE, COLOR_TEXT_SUBDUED,
 };
-use crate::widgets::{
-    TrackMenuActions, draw_sort_arrow, play_circle_button, render_track_context_menu,
-};
+use crate::views::{ViewAction, ViewContext};
+use crate::widgets::{draw_sort_arrow, play_circle_button, render_track_context_menu};
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, Vec2};
-use spoty_core::{PlaylistId, Track, TrackId};
-use spoty_storage::Library;
+use spoty_core::Track;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SongsMode {
@@ -35,25 +33,16 @@ pub struct SongsViewState {
 pub struct SongsView;
 
 impl SongsView {
-    pub fn show(
-        ui: &mut egui::Ui,
-        library: &Library,
-        mode: SongsMode,
-        current_track_id: Option<&TrackId>,
-        is_track_fav: &impl Fn(&TrackId) -> bool,
-        on_toggle_fav: &mut impl FnMut(TrackId),
-        on_play_track: &mut impl FnMut(Track),
-        on_play_all: &mut impl FnMut(Vec<Track>),
-        on_add_to_queue: &mut impl FnMut(Track),
-        on_add_to_playlist: &mut impl FnMut(PlaylistId, TrackId),
-        on_create_playlist_with_track: &mut impl FnMut(TrackId),
-    ) {
+    pub fn show(ui: &mut egui::Ui, ctx: &ViewContext<'_>, mode: SongsMode) -> Option<ViewAction> {
+        let mut action = None;
+
         let mut tracks: Vec<Track> = match mode {
-            SongsMode::All => library.tracks.clone(),
-            SongsMode::Liked => library
+            SongsMode::All => ctx.library.tracks.clone(),
+            SongsMode::Liked => ctx
+                .library
                 .tracks
                 .iter()
-                .filter(|t| is_track_fav(&t.id))
+                .filter(|t| (ctx.is_favorite)(&t.id))
                 .cloned()
                 .collect(),
         };
@@ -104,9 +93,9 @@ impl SongsView {
             }
             SortColumn::Album => {
                 tracks.sort_by(|a, b| {
-                    let a_alb = a.album.as_deref().unwrap_or("");
-                    let b_alb = b.album.as_deref().unwrap_or("");
-                    let ord = a_alb.to_lowercase().cmp(&b_alb.to_lowercase());
+                    let album_a = a.album.as_deref().unwrap_or("").to_lowercase();
+                    let album_b = b.album.as_deref().unwrap_or("").to_lowercase();
+                    let ord = album_a.cmp(&album_b);
                     if state.sort_ascending {
                         ord
                     } else {
@@ -129,84 +118,78 @@ impl SongsView {
         let total_duration_secs: u32 = tracks.iter().map(|t| t.duration_secs).sum();
         let total_mins = total_duration_secs / 60;
 
-        // 1. Hero Banner with Gradient
-        let banner_color = match mode {
-            SongsMode::All => Color32::from_rgb(0x1a, 0x38, 0x46), // Deep Slate Teal
-            SongsMode::Liked => Color32::from_rgb(0x45, 0x0a, 0xa5), // Spotify Liked Songs Purple
+        // 1. Full-Bleed Hero Banner
+        let (hero_title, hero_bg, hero_icon) = match mode {
+            SongsMode::All => (
+                "All Songs",
+                Color32::from_rgb(0x1a, 0x2e, 0x3d), // Deep navy
+                "🎶",
+            ),
+            SongsMode::Liked => (
+                "Liked Songs",
+                Color32::from_rgb(0x2d, 0x1a, 0x47), // Deep purple
+                "💚",
+            ),
         };
 
         egui::Frame::new()
-            .fill(banner_color)
+            .fill(hero_bg)
             .corner_radius(CornerRadius::same(8))
             .inner_margin(egui::Margin::same(24))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    // Artwork Box
                     let art_size = Vec2::splat(140.0);
                     let (art_rect, _) = ui.allocate_exact_size(art_size, Sense::hover());
                     if ui.is_rect_visible(art_rect) {
                         let p = ui.painter();
                         p.rect_filled(art_rect, CornerRadius::same(6), COLOR_BG_CARD);
-
-                        match mode {
-                            SongsMode::All => {
-                                p.text(
-                                    art_rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    "🎵",
-                                    FontId::proportional(48.0),
-                                    COLOR_TEXT_SUBDUED,
-                                );
-                            }
-                            SongsMode::Liked => {
-                                p.text(
-                                    art_rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    "💜",
-                                    FontId::proportional(48.0),
-                                    Color32::WHITE,
-                                );
-                            }
-                        }
+                        p.circle_stroke(
+                            art_rect.center(),
+                            36.0,
+                            Stroke::new(1.0_f32, Color32::from_black_alpha(40)),
+                        );
+                        p.text(
+                            art_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            hero_icon,
+                            FontId::proportional(50.0),
+                            COLOR_TEXT_BASE,
+                        );
                     }
 
                     ui.add_space(20.0);
 
+                    // Hero Text
                     ui.vertical(|ui| {
-                        let header_tag = match mode {
-                            SongsMode::All => "LIBRARY COLLECTION",
+                        let tag = match mode {
+                            SongsMode::All => "LIBRARY",
                             SongsMode::Liked => "PLAYLIST",
                         };
                         ui.label(
-                            egui::RichText::new(header_tag)
+                            egui::RichText::new(tag)
                                 .size(11.0)
                                 .strong()
                                 .color(COLOR_TEXT_BASE),
                         );
                         ui.add_space(2.0);
 
-                        let title = match mode {
-                            SongsMode::All => "All Songs",
-                            SongsMode::Liked => "Liked Songs",
-                        };
                         ui.label(
-                            egui::RichText::new(title)
+                            egui::RichText::new(hero_title)
                                 .size(38.0)
                                 .strong()
                                 .color(COLOR_TEXT_BASE),
                         );
-                        ui.add_space(8.0);
+                        ui.add_space(10.0);
 
-                        let summary = match mode {
-                            SongsMode::All => {
-                                format!(
-                                    "Unified Library • {} tracks, approx {} min",
-                                    tracks.len(),
-                                    total_mins
-                                )
-                            }
-                            SongsMode::Liked => {
-                                format!("Spoty • {} songs, approx {} min", tracks.len(), total_mins)
-                            }
+                        let summary = if !state.filter_query.trim().is_empty() {
+                            format!(
+                                "Showing {} matching songs (approx {} min)",
+                                tracks.len(),
+                                total_mins
+                            )
+                        } else {
+                            format!("{} songs, approx {} min", tracks.len(), total_mins)
                         };
                         ui.label(
                             egui::RichText::new(summary)
@@ -225,7 +208,7 @@ impl SongsView {
                 .on_hover_text("Play All")
                 .clicked()
             {
-                on_play_all(tracks.clone());
+                action = Some(ViewAction::PlayAll(tracks.clone()));
             }
 
             ui.add_space(16.0);
@@ -386,7 +369,7 @@ impl SongsView {
         } else {
             // 4. Interactive Track List Rows
             for (index, track) in tracks.iter().enumerate() {
-                let is_current = current_track_id == Some(&track.id);
+                let is_current = ctx.current_track_id == Some(&track.id);
                 let row_height = 54.0;
                 let (row_rect, row_resp) =
                     ui.allocate_exact_size(Vec2::new(table_width, row_height), Sense::click());
@@ -494,24 +477,17 @@ impl SongsView {
                 }
 
                 if row_resp.clicked() {
-                    on_play_track(track.clone());
+                    action = Some(ViewAction::PlayTrack(track.clone()));
                 }
 
-                let fav = is_track_fav(&track.id);
-
-                let mut actions = TrackMenuActions {
-                    is_fav: fav,
-                    custom_playlists: &library.playlists,
-                    current_playlist_id: None,
-                    on_toggle_fav,
-                    on_add_to_queue,
-                    on_add_to_playlist,
-                    on_create_playlist_with_track,
-                    on_remove_from_playlist: None,
-                };
+                let fav = (ctx.is_favorite)(&track.id);
 
                 row_resp.context_menu(|ui| {
-                    render_track_context_menu(ui, track, &mut actions);
+                    if let Some(act) =
+                        render_track_context_menu(ui, track, &ctx.library.playlists, None, fav)
+                    {
+                        action = Some(act);
+                    }
                 });
 
                 // Heart Button
@@ -541,7 +517,7 @@ impl SongsView {
                     }
                 }
                 if heart_resp.clicked() {
-                    on_toggle_fav(track.id.clone());
+                    action = Some(ViewAction::ToggleFavorite(track.id.clone()));
                 }
 
                 ui.add_space(2.0);
@@ -549,5 +525,6 @@ impl SongsView {
         }
 
         ui.data_mut(|d| d.insert_temp(view_id, state));
+        action
     }
 }

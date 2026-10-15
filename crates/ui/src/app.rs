@@ -17,7 +17,9 @@ use crate::theme::{
     COLOR_ACCENT_GREEN, COLOR_BG_BASE, COLOR_BG_CARD, COLOR_BG_ELEVATED, COLOR_BG_HIGHLIGHT,
     COLOR_CANVAS, COLOR_DIVIDER, COLOR_TEXT_BASE, COLOR_TEXT_SUBDUED,
 };
-use crate::views::{HomeView, PlaylistView, SearchView, SettingsView, SongsMode, SongsView};
+use crate::views::{
+    HomeView, PlaylistView, SearchView, SettingsView, SongsMode, SongsView, ViewAction, ViewContext,
+};
 use crate::widgets::{
     SpotifySlider, VisualizerWidget, draw_close_icon, draw_home_icon, draw_plus_icon, heart_button,
     next_button, play_circle_button, prev_button, queue_button, repeat_button, shuffle_button,
@@ -149,6 +151,55 @@ impl SpotyApp {
 
     fn play_all_tracks(&mut self, tracks: Vec<Track>) {
         self.session.play_all(tracks, 0);
+    }
+
+    fn handle_view_action(&mut self, action: ViewAction) {
+        match action {
+            ViewAction::Navigate(route) => {
+                self.nav.push(route);
+            }
+            ViewAction::PlayTrack(track) => {
+                self.play_track(track);
+            }
+            ViewAction::PlayAll(tracks) => {
+                self.play_all_tracks(tracks);
+            }
+            ViewAction::ToggleFavorite(tid) => {
+                let _ = self.catalog.toggle_favorite(&tid);
+            }
+            ViewAction::AddToQueue(track) => {
+                self.session.enqueue_last(track);
+            }
+            ViewAction::AddToPlaylist(pl_id, trk_id) => {
+                let _ = self.catalog.add_track_to_playlist(&pl_id, &trk_id);
+            }
+            ViewAction::CreatePlaylistWithTrack(trk_id) => {
+                let pl_name = format!(
+                    "My Playlist #{}",
+                    self.catalog.library().playlists.len() + 1
+                );
+                if let Ok(new_pl) = self.catalog.create_playlist(&pl_name, None) {
+                    let _ = self.catalog.add_track_to_playlist(&new_pl.id, &trk_id);
+                }
+            }
+            ViewAction::EditPlaylist(pl_id) => {
+                if let Some(pl) = self.catalog.get_playlist(&pl_id) {
+                    self.editing_playlist = Some(PlaylistEditModal {
+                        id: pl.id.clone(),
+                        title: pl.title.clone(),
+                        description: pl.description.clone().unwrap_or_default(),
+                    });
+                }
+            }
+            ViewAction::DeletePlaylist(pl_id) => {
+                if let Some(pl) = self.catalog.get_playlist(&pl_id) {
+                    self.pending_delete_playlist = Some(pl);
+                }
+            }
+            ViewAction::RemoveTrackFromPlaylist(pl_id, trk_id) => {
+                let _ = self.catalog.remove_track_from_playlist(&pl_id, &trk_id);
+            }
+        }
     }
 
     fn switch_provider(&mut self, provider: Arc<dyn MusicProvider>, p_type: ProviderType) {
@@ -1476,350 +1527,70 @@ impl eframe::App for SpotyApp {
                     .show(ui, |ui| {
                         let active_track_id = state.current_track.as_ref().map(|t| &t.id);
                         let current_route = self.nav.current().clone();
+                        let catalog = Arc::clone(&self.catalog);
+                        let is_fav = move |tid: &spoty_core::TrackId| catalog.is_favorite(tid);
+                        let view_ctx = ViewContext::new(&library, active_track_id, &is_fav);
 
-                        egui::ScrollArea::vertical().show(ui, |ui| match current_route {
-                            Route::Home => {
-                                let mut nav_action = None;
-                                let mut play_action = None;
-                                let mut playlist_action = None;
-                                let catalog_ref = &self.catalog;
-                                let is_fav_closure =
-                                    |tid: &spoty_core::TrackId| catalog_ref.is_favorite(tid);
-                                let mut toggle_fav_action = None;
-                                let mut add_to_queue_action = None;
-                                let mut add_to_playlist_action = None;
-                                let mut create_pl_action = None;
+                        let action = egui::ScrollArea::vertical()
+                            .show(ui, |ui| match current_route {
+                                Route::Home => HomeView::show(ui, &view_ctx),
+                                Route::Search => {
+                                    SearchView::show(ui, &view_ctx, &mut self.search_query)
+                                }
+                                Route::AllSongs => SongsView::show(ui, &view_ctx, SongsMode::All),
+                                Route::LikedSongs => {
+                                    SongsView::show(ui, &view_ctx, SongsMode::Liked)
+                                }
+                                Route::Playlist(playlist_id) => {
+                                    PlaylistView::show(ui, &view_ctx, &playlist_id)
+                                }
+                                Route::Album(_) => {
+                                    ui.label("Album view");
+                                    None
+                                }
+                                Route::Settings => {
+                                    let provider_name = self.provider.display_name().to_string();
+                                    let mut switch_demo = false;
+                                    let mut switch_fs = None;
+                                    let mut switch_s3 = None;
+                                    let mut switch_subsonic = None;
+                                    let mut switch_spotify = None;
 
-                                HomeView::show(
-                                    ui,
-                                    &library,
-                                    active_track_id,
-                                    &is_fav_closure,
-                                    &mut |route| nav_action = Some(route),
-                                    &mut |track| play_action = Some(track),
-                                    &mut |playlist| playlist_action = Some(playlist),
-                                    &mut |tid| toggle_fav_action = Some(tid),
-                                    &mut |track| add_to_queue_action = Some(track),
-                                    &mut |pl_id, trk_id| {
-                                        add_to_playlist_action = Some((pl_id, trk_id))
-                                    },
-                                    &mut |trk_id| create_pl_action = Some(trk_id),
-                                );
-
-                                if let Some(route) = nav_action {
-                                    self.nav.push(route);
-                                }
-                                if let Some(track) = play_action {
-                                    self.play_track(track);
-                                }
-                                if let Some(playlist) = playlist_action {
-                                    let tracks: Vec<_> = playlist
-                                        .track_ids
-                                        .iter()
-                                        .filter_map(|id| {
-                                            library.tracks.iter().find(|t| &t.id == id).cloned()
-                                        })
-                                        .collect();
-                                    self.play_all_tracks(tracks);
-                                }
-                                if let Some(tid) = toggle_fav_action {
-                                    let _ = self.catalog.toggle_favorite(&tid);
-                                }
-                                if let Some(track) = add_to_queue_action {
-                                    self.session.enqueue_last(track);
-                                }
-                                if let Some((pl_id, trk_id)) = add_to_playlist_action {
-                                    let _ = self.catalog.add_track_to_playlist(&pl_id, &trk_id);
-                                }
-                                if let Some(trk_id) = create_pl_action {
-                                    let pl_name = format!(
-                                        "My Playlist #{}",
-                                        self.catalog.library().playlists.len() + 1
+                                    SettingsView::show(
+                                        ui,
+                                        &provider_name,
+                                        &mut self.config,
+                                        &mut || switch_demo = true,
+                                        &mut |path| switch_fs = Some(path),
+                                        &mut |s3| switch_s3 = Some(s3),
+                                        &mut |subsonic| switch_subsonic = Some(subsonic),
+                                        &mut |spotify| switch_spotify = Some(spotify),
                                     );
-                                    if let Ok(new_pl) = self.catalog.create_playlist(&pl_name, None)
-                                    {
-                                        let _ =
-                                            self.catalog.add_track_to_playlist(&new_pl.id, &trk_id);
+
+                                    if switch_demo {
+                                        self.switch_to_demo();
                                     }
-                                }
-                            }
-                            Route::Search => {
-                                let mut play_action = None;
-                                let catalog_ref = &self.catalog;
-                                let is_fav_closure =
-                                    |tid: &spoty_core::TrackId| catalog_ref.is_favorite(tid);
-                                let mut toggle_fav_action = None;
-                                let mut add_to_queue_action = None;
-                                let mut add_to_playlist_action = None;
-                                let mut create_pl_action = None;
-
-                                SearchView::show(
-                                    ui,
-                                    &library,
-                                    &mut self.search_query,
-                                    active_track_id,
-                                    &is_fav_closure,
-                                    &mut |tid| toggle_fav_action = Some(tid),
-                                    &mut |track| play_action = Some(track),
-                                    &mut |track| add_to_queue_action = Some(track),
-                                    &mut |pl_id, trk_id| {
-                                        add_to_playlist_action = Some((pl_id, trk_id))
-                                    },
-                                    &mut |trk_id| create_pl_action = Some(trk_id),
-                                );
-
-                                if let Some(tid) = toggle_fav_action {
-                                    let _ = self.catalog.toggle_favorite(&tid);
-                                }
-                                if let Some(track) = play_action {
-                                    self.play_track(track);
-                                }
-                                if let Some(track) = add_to_queue_action {
-                                    self.session.enqueue_last(track);
-                                }
-                                if let Some((pl_id, trk_id)) = add_to_playlist_action {
-                                    let _ = self.catalog.add_track_to_playlist(&pl_id, &trk_id);
-                                }
-                                if let Some(trk_id) = create_pl_action {
-                                    let pl_name = format!(
-                                        "My Playlist #{}",
-                                        self.catalog.library().playlists.len() + 1
-                                    );
-                                    if let Ok(new_pl) = self.catalog.create_playlist(&pl_name, None)
-                                    {
-                                        let _ =
-                                            self.catalog.add_track_to_playlist(&new_pl.id, &trk_id);
+                                    if let Some(path) = switch_fs {
+                                        self.switch_to_local_fs(path);
                                     }
-                                }
-                            }
-                            Route::AllSongs => {
-                                let mut play_action = None;
-                                let mut play_all_action = None;
-                                let catalog_ref = &self.catalog;
-                                let is_fav_closure =
-                                    |tid: &spoty_core::TrackId| catalog_ref.is_favorite(tid);
-                                let mut toggle_fav_action = None;
-                                let mut add_to_queue_action = None;
-                                let mut add_to_playlist_action = None;
-                                let mut create_pl_action = None;
-
-                                SongsView::show(
-                                    ui,
-                                    &library,
-                                    SongsMode::All,
-                                    active_track_id,
-                                    &is_fav_closure,
-                                    &mut |tid| toggle_fav_action = Some(tid),
-                                    &mut |track| play_action = Some(track),
-                                    &mut |tracks| play_all_action = Some(tracks),
-                                    &mut |track| add_to_queue_action = Some(track),
-                                    &mut |pl_id, trk_id| {
-                                        add_to_playlist_action = Some((pl_id, trk_id))
-                                    },
-                                    &mut |trk_id| create_pl_action = Some(trk_id),
-                                );
-
-                                if let Some(tid) = toggle_fav_action {
-                                    let _ = self.catalog.toggle_favorite(&tid);
-                                }
-                                if let Some(track) = play_action {
-                                    self.play_track(track);
-                                }
-                                if let Some(tracks) = play_all_action {
-                                    self.play_all_tracks(tracks);
-                                }
-                                if let Some(track) = add_to_queue_action {
-                                    self.session.enqueue_last(track);
-                                }
-                                if let Some((pl_id, trk_id)) = add_to_playlist_action {
-                                    let _ = self.catalog.add_track_to_playlist(&pl_id, &trk_id);
-                                }
-                                if let Some(trk_id) = create_pl_action {
-                                    let pl_name = format!(
-                                        "My Playlist #{}",
-                                        self.catalog.library().playlists.len() + 1
-                                    );
-                                    if let Ok(new_pl) = self.catalog.create_playlist(&pl_name, None)
-                                    {
-                                        let _ =
-                                            self.catalog.add_track_to_playlist(&new_pl.id, &trk_id);
+                                    if let Some(s3) = switch_s3 {
+                                        self.switch_to_s3(s3);
                                     }
-                                }
-                            }
-                            Route::LikedSongs => {
-                                let mut play_action = None;
-                                let mut play_all_action = None;
-                                let catalog_ref = &self.catalog;
-                                let is_fav_closure =
-                                    |tid: &spoty_core::TrackId| catalog_ref.is_favorite(tid);
-                                let mut toggle_fav_action = None;
-                                let mut add_to_queue_action = None;
-                                let mut add_to_playlist_action = None;
-                                let mut create_pl_action = None;
-
-                                SongsView::show(
-                                    ui,
-                                    &library,
-                                    SongsMode::Liked,
-                                    active_track_id,
-                                    &is_fav_closure,
-                                    &mut |tid| toggle_fav_action = Some(tid),
-                                    &mut |track| play_action = Some(track),
-                                    &mut |tracks| play_all_action = Some(tracks),
-                                    &mut |track| add_to_queue_action = Some(track),
-                                    &mut |pl_id, trk_id| {
-                                        add_to_playlist_action = Some((pl_id, trk_id))
-                                    },
-                                    &mut |trk_id| create_pl_action = Some(trk_id),
-                                );
-
-                                if let Some(tid) = toggle_fav_action {
-                                    let _ = self.catalog.toggle_favorite(&tid);
-                                }
-                                if let Some(track) = play_action {
-                                    self.play_track(track);
-                                }
-                                if let Some(tracks) = play_all_action {
-                                    self.play_all_tracks(tracks);
-                                }
-                                if let Some(track) = add_to_queue_action {
-                                    self.session.enqueue_last(track);
-                                }
-                                if let Some((pl_id, trk_id)) = add_to_playlist_action {
-                                    let _ = self.catalog.add_track_to_playlist(&pl_id, &trk_id);
-                                }
-                                if let Some(trk_id) = create_pl_action {
-                                    let pl_name = format!(
-                                        "My Playlist #{}",
-                                        self.catalog.library().playlists.len() + 1
-                                    );
-                                    if let Ok(new_pl) = self.catalog.create_playlist(&pl_name, None)
-                                    {
-                                        let _ =
-                                            self.catalog.add_track_to_playlist(&new_pl.id, &trk_id);
+                                    if let Some(subsonic) = switch_subsonic {
+                                        self.switch_to_subsonic(subsonic);
                                     }
-                                }
-                            }
-                            Route::Playlist(playlist_id) => {
-                                let mut play_action = None;
-                                let mut play_all_action = None;
-                                let mut edit_action = None;
-                                let mut delete_action = None;
-                                let mut remove_track_action = None;
-                                let mut add_to_queue_action = None;
-                                let mut add_to_playlist_action = None;
-                                let mut create_pl_action = None;
-
-                                let catalog_ref = &self.catalog;
-                                let is_fav_closure =
-                                    |tid: &spoty_core::TrackId| catalog_ref.is_favorite(tid);
-                                let mut toggle_fav_action = None;
-
-                                PlaylistView::show(
-                                    ui,
-                                    &library,
-                                    &playlist_id,
-                                    active_track_id,
-                                    &is_fav_closure,
-                                    &mut |tid| toggle_fav_action = Some(tid),
-                                    &mut |track| play_action = Some(track),
-                                    &mut |tracks| play_all_action = Some(tracks),
-                                    &mut |pl_id| edit_action = Some(pl_id),
-                                    &mut |pl_id| delete_action = Some(pl_id),
-                                    &mut |pl_id, trk_id| {
-                                        remove_track_action = Some((pl_id, trk_id))
-                                    },
-                                    &mut |track| add_to_queue_action = Some(track),
-                                    &mut |pl_id, trk_id| {
-                                        add_to_playlist_action = Some((pl_id, trk_id))
-                                    },
-                                    &mut |trk_id| create_pl_action = Some(trk_id),
-                                );
-
-                                if let Some(tid) = toggle_fav_action {
-                                    let _ = self.catalog.toggle_favorite(&tid);
-                                }
-                                if let Some(track) = play_action {
-                                    self.play_track(track);
-                                }
-                                if let Some(tracks) = play_all_action {
-                                    self.play_all_tracks(tracks);
-                                }
-                                if let Some(pl_id) = edit_action {
-                                    if let Some(pl) = self.catalog.get_playlist(&pl_id) {
-                                        self.editing_playlist = Some(PlaylistEditModal {
-                                            id: pl.id.clone(),
-                                            title: pl.title.clone(),
-                                            description: pl.description.clone().unwrap_or_default(),
-                                        });
+                                    if let Some(spotify) = switch_spotify {
+                                        self.switch_to_spotify(spotify);
                                     }
-                                }
-                                if let Some(pl_id) = delete_action {
-                                    if let Some(pl) = self.catalog.get_playlist(&pl_id) {
-                                        self.pending_delete_playlist = Some(pl);
-                                    }
-                                }
-                                if let Some((pl_id, trk_id)) = remove_track_action {
-                                    let _ =
-                                        self.catalog.remove_track_from_playlist(&pl_id, &trk_id);
-                                }
-                                if let Some(track) = add_to_queue_action {
-                                    self.session.enqueue_last(track);
-                                }
-                                if let Some((pl_id, trk_id)) = add_to_playlist_action {
-                                    let _ = self.catalog.add_track_to_playlist(&pl_id, &trk_id);
-                                }
-                                if let Some(trk_id) = create_pl_action {
-                                    let pl_name = format!(
-                                        "My Playlist #{}",
-                                        self.catalog.library().playlists.len() + 1
-                                    );
-                                    if let Ok(new_pl) = self.catalog.create_playlist(&pl_name, None)
-                                    {
-                                        let _ =
-                                            self.catalog.add_track_to_playlist(&new_pl.id, &trk_id);
-                                    }
-                                }
-                            }
-                            Route::Album(_) => {
-                                ui.label("Album view");
-                            }
-                            Route::Settings => {
-                                let provider_name = self.provider.display_name().to_string();
-                                let mut switch_demo = false;
-                                let mut switch_fs = None;
-                                let mut switch_s3 = None;
-                                let mut switch_subsonic = None;
-                                let mut switch_spotify = None;
 
-                                SettingsView::show(
-                                    ui,
-                                    &provider_name,
-                                    &mut self.config,
-                                    &mut || switch_demo = true,
-                                    &mut |path| switch_fs = Some(path),
-                                    &mut |s3| switch_s3 = Some(s3),
-                                    &mut |subsonic| switch_subsonic = Some(subsonic),
-                                    &mut |spotify| switch_spotify = Some(spotify),
-                                );
+                                    None
+                                }
+                            })
+                            .inner;
 
-                                if switch_demo {
-                                    self.switch_to_demo();
-                                }
-                                if let Some(path) = switch_fs {
-                                    self.switch_to_local_fs(path);
-                                }
-                                if let Some(s3) = switch_s3 {
-                                    self.switch_to_s3(s3);
-                                }
-                                if let Some(subsonic) = switch_subsonic {
-                                    self.switch_to_subsonic(subsonic);
-                                }
-                                if let Some(spotify) = switch_spotify {
-                                    self.switch_to_spotify(spotify);
-                                }
-                            }
-                        });
+                        if let Some(action) = action {
+                            self.handle_view_action(action);
+                        }
                     });
             });
 

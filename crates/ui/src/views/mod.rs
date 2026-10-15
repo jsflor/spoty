@@ -1,9 +1,11 @@
+pub mod context;
 pub mod home;
 pub mod playlist;
 pub mod search;
 pub mod settings;
 pub mod songs;
 
+pub use context::{ViewAction, ViewContext};
 pub use home::HomeView;
 pub use playlist::PlaylistView;
 pub use search::SearchView;

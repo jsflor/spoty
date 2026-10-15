@@ -2,26 +2,20 @@ use crate::theme::{
     COLOR_ACCENT_GREEN, COLOR_BG_CARD, COLOR_BG_HIGHLIGHT, COLOR_DIVIDER, COLOR_TEXT_BASE,
     COLOR_TEXT_SUBDUED,
 };
-use crate::widgets::{TrackMenuActions, render_track_context_menu};
+use crate::views::{ViewAction, ViewContext};
+use crate::widgets::render_track_context_menu;
 use eframe::egui::{self, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Stroke, Vec2};
-use spoty_core::{PlaylistId, Track, TrackId};
-use spoty_storage::Library;
 
 pub struct SearchView;
 
 impl SearchView {
     pub fn show(
         ui: &mut egui::Ui,
-        library: &Library,
+        ctx: &ViewContext<'_>,
         search_query: &mut String,
-        current_track_id: Option<&spoty_core::TrackId>,
-        is_track_fav: &impl Fn(&spoty_core::TrackId) -> bool,
-        on_toggle_fav: &mut impl FnMut(TrackId),
-        on_play_track: &mut impl FnMut(Track),
-        on_add_to_queue: &mut impl FnMut(Track),
-        on_add_to_playlist: &mut impl FnMut(PlaylistId, TrackId),
-        on_create_playlist_with_track: &mut impl FnMut(TrackId),
-    ) {
+    ) -> Option<ViewAction> {
+        let mut action = None;
+
         ui.heading(
             egui::RichText::new("Search")
                 .size(26.0)
@@ -84,7 +78,8 @@ impl SearchView {
                 });
         } else {
             // Search results
-            let matches: Vec<_> = library
+            let matches: Vec<_> = ctx
+                .library
                 .tracks
                 .iter()
                 .filter(|t| {
@@ -163,7 +158,7 @@ impl SearchView {
                 ui.add_space(4.0);
 
                 for (index, track) in matches.iter().enumerate() {
-                    let is_current = current_track_id == Some(&track.id);
+                    let is_current = ctx.current_track_id == Some(&track.id);
                     let row_height = 54.0;
                     let (row_rect, row_resp) =
                         ui.allocate_exact_size(Vec2::new(table_width, row_height), Sense::click());
@@ -271,23 +266,17 @@ impl SearchView {
                     }
 
                     if row_resp.clicked() {
-                        on_play_track((*track).clone());
+                        action = Some(ViewAction::PlayTrack((*track).clone()));
                     }
 
-                    let fav = is_track_fav(&track.id);
+                    let fav = (ctx.is_favorite)(&track.id);
 
-                    let mut actions = TrackMenuActions {
-                        is_fav: fav,
-                        custom_playlists: &library.playlists,
-                        current_playlist_id: None,
-                        on_toggle_fav,
-                        on_add_to_queue,
-                        on_add_to_playlist,
-                        on_create_playlist_with_track,
-                        on_remove_from_playlist: None,
-                    };
                     row_resp.context_menu(|ui| {
-                        render_track_context_menu(ui, track, &mut actions);
+                        if let Some(act) =
+                            render_track_context_menu(ui, track, &ctx.library.playlists, None, fav)
+                        {
+                            action = Some(act);
+                        }
                     });
 
                     // Heart Button
@@ -317,12 +306,14 @@ impl SearchView {
                         }
                     }
                     if heart_resp.clicked() {
-                        on_toggle_fav(track.id.clone());
+                        action = Some(ViewAction::ToggleFavorite(track.id.clone()));
                     }
 
                     ui.add_space(2.0);
                 }
             }
         }
+
+        action
     }
 }
