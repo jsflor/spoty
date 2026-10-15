@@ -51,3 +51,11 @@ The audio playback engine SHALL seek directly to the requested timeline position
 - **THEN** the worker SHALL update `state.position_secs` to the requested position
 - **AND** the audio sink SHALL output audio starting from the requested timestamp without remaining at the previous position
 - **AND** the internal timing reference `last_tick` SHALL be reset to prevent time drifting
+
+### Requirement: Audio Sink Hardware Seam
+The playback engine SHALL decouple playback state transitions and stream decoding from OS audio hardware by delegating output operations to an `AudioSink` seam.
+
+#### Scenario: Delegating playback commands to sink
+- **GIVEN** an active `AudioEngine` configured with an `AudioSink`
+- **WHEN** commands (`Play`, `Pause`, `Stop`, `SetVolume`) are processed
+- **THEN** corresponding methods on the `AudioSink` are invoked and playback state is updated deterministically

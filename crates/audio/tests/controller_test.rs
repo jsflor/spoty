@@ -1,10 +1,10 @@
-use spoty_audio::{PlayerController, PlayerEvent};
+use spoty_audio::{MockSink, PlayerController, PlayerEvent};
 use spoty_core::{AudioFormat, PlaybackStatus, Track, TrackId};
 use std::time::Duration;
 
 #[test]
 fn test_player_controller_lifecycle() {
-    let (controller, event_rx) = PlayerController::new();
+    let (controller, event_rx) = PlayerController::new_with_sink(Box::new(MockSink::new()));
 
     let track = Track {
         id: TrackId::new("test_trk"),
@@ -20,11 +20,11 @@ fn test_player_controller_lifecycle() {
     // Synthesize 0.5s of valid PCM WAV
     let wav_bytes = create_test_wav(440.0, 0.5);
 
-    controller.load_track(track.clone(), wav_bytes);
+    controller.load_track(track, wav_bytes);
 
     // Wait for state event from worker
     let event = event_rx
-        .recv_timeout(Duration::from_secs(1))
+        .recv_timeout(Duration::from_millis(50))
         .expect("Timed out waiting for worker event");
     if let PlayerEvent::StateChanged(state) = event {
         assert_eq!(state.status, PlaybackStatus::Playing);
@@ -35,7 +35,7 @@ fn test_player_controller_lifecycle() {
 
     controller.pause();
     let event = event_rx
-        .recv_timeout(Duration::from_secs(1))
+        .recv_timeout(Duration::from_millis(50))
         .expect("Timed out waiting for pause event");
     if let PlayerEvent::StateChanged(state) = event {
         assert_eq!(state.status, PlaybackStatus::Paused);
@@ -44,7 +44,7 @@ fn test_player_controller_lifecycle() {
 
 #[test]
 fn test_player_controller_seek_updates_position_and_state() {
-    let (controller, event_rx) = PlayerController::new();
+    let (controller, event_rx) = PlayerController::new_with_sink(Box::new(MockSink::new()));
 
     let track = Track {
         id: TrackId::new("test_trk_seek"),
@@ -60,70 +60,39 @@ fn test_player_controller_seek_updates_position_and_state() {
     let wav_bytes = create_test_wav(440.0, 5.0);
     controller.load_track(track, wav_bytes);
 
-    // Drain initial LoadTrack events until playing
-    let mut initial_loaded = false;
-    for _ in 0..10 {
-        if let Ok(PlayerEvent::StateChanged(st)) = event_rx.recv_timeout(Duration::from_millis(500))
-        {
-            if st.status == PlaybackStatus::Playing {
-                initial_loaded = true;
-                break;
-            }
-        }
+    // Initial load event
+    let event = event_rx
+        .recv_timeout(Duration::from_millis(50))
+        .expect("Expected initial load event");
+    if let PlayerEvent::StateChanged(st) = event {
+        assert_eq!(st.status, PlaybackStatus::Playing);
     }
-    assert!(initial_loaded, "Expected initial playing state");
 
     // Seek forward to 12.0 seconds
     controller.seek(Duration::from_secs_f64(12.0));
 
-    let mut forward_seek_verified = false;
-    for _ in 0..10 {
-        if let Ok(event) = event_rx.recv_timeout(Duration::from_millis(500)) {
-            match event {
-                PlayerEvent::StateChanged(st) => {
-                    assert_eq!(st.status, PlaybackStatus::Playing);
-                    if (st.position_secs - 12.0).abs() < 1.0 {
-                        forward_seek_verified = true;
-                        break;
-                    }
-                }
-                PlayerEvent::TrackEnded(_) => {
-                    panic!("Premature TrackEnded emitted during forward seek!");
-                }
-                _ => {}
-            }
-        }
+    let event = event_rx
+        .recv_timeout(Duration::from_millis(50))
+        .expect("Expected forward seek event");
+    if let PlayerEvent::StateChanged(st) = event {
+        assert_eq!(st.status, PlaybackStatus::Playing);
+        assert!((st.position_secs - 12.0).abs() < 1e-3);
+    } else {
+        panic!("Expected StateChanged event for seek");
     }
-    assert!(
-        forward_seek_verified,
-        "Expected state position to reflect forward seek target"
-    );
 
     // Seek backward to 3.0 seconds
     controller.seek(Duration::from_secs_f64(3.0));
 
-    let mut backward_seek_verified = false;
-    for _ in 0..10 {
-        if let Ok(event) = event_rx.recv_timeout(Duration::from_millis(500)) {
-            match event {
-                PlayerEvent::StateChanged(st) => {
-                    assert_eq!(st.status, PlaybackStatus::Playing);
-                    if (st.position_secs - 3.0).abs() < 1.0 {
-                        backward_seek_verified = true;
-                        break;
-                    }
-                }
-                PlayerEvent::TrackEnded(_) => {
-                    panic!("Premature TrackEnded emitted during backward seek!");
-                }
-                _ => {}
-            }
-        }
+    let event = event_rx
+        .recv_timeout(Duration::from_millis(50))
+        .expect("Expected backward seek event");
+    if let PlayerEvent::StateChanged(st) = event {
+        assert_eq!(st.status, PlaybackStatus::Playing);
+        assert!((st.position_secs - 3.0).abs() < 1e-3);
+    } else {
+        panic!("Expected StateChanged event for seek");
     }
-    assert!(
-        backward_seek_verified,
-        "Expected state position to reflect backward seek target"
-    );
 }
 
 fn create_test_wav(freq: f32, duration_secs: f32) -> Vec<u8> {

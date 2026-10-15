@@ -1,4 +1,5 @@
 use crate::engine::{PlayerCommand, PlayerEvent};
+use crate::sink::AudioSink;
 use crate::worker::AudioWorker;
 use spoty_core::{PlaybackState, Track};
 use std::sync::mpsc::{Receiver, Sender, channel};
@@ -17,6 +18,22 @@ impl PlayerController {
         let (event_tx, event_rx) = channel();
 
         AudioWorker::spawn(cmd_rx, event_tx);
+
+        let cached_state = Arc::new(RwLock::new(PlaybackState::default()));
+
+        let controller = Self {
+            cmd_tx,
+            cached_state,
+        };
+
+        (controller, event_rx)
+    }
+
+    pub fn new_with_sink(sink: Box<dyn AudioSink>) -> (Self, Receiver<PlayerEvent>) {
+        let (cmd_tx, cmd_rx) = channel();
+        let (event_tx, event_rx) = channel();
+
+        AudioWorker::spawn_with_sink(cmd_rx, event_tx, sink);
 
         let cached_state = Arc::new(RwLock::new(PlaybackState::default()));
 
