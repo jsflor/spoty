@@ -303,3 +303,47 @@ fn test_session_automatic_track_progression_on_eof() {
         "Session coordinator should autonomously advance to Track 2 on EOF"
     );
 }
+
+#[test]
+fn test_session_play_track_unknown_id_ignored() {
+    let resolver = Arc::new(MockResolver {
+        wav_bytes: create_test_wav(440.0, 1.0),
+    });
+    let (session, event_rx) = PlaybackSession::new(resolver);
+
+    let t1 = make_test_track("t1", "Track 1");
+    let t2 = make_test_track("t2", "Track 2");
+    session.set_queue(vec![t1.clone(), t2.clone()], Some(0));
+
+    // Wait for queue state
+    let mut initial_ready = false;
+    for _ in 0..10 {
+        if let Ok(SessionEvent::StateChanged(state)) =
+            event_rx.recv_timeout(Duration::from_millis(200))
+        {
+            if state.current_track.as_ref().map(|t| t.title.as_str()) == Some("Track 1") {
+                initial_ready = true;
+                break;
+            }
+        }
+    }
+    assert!(initial_ready);
+
+    // Dispatch play_track with a non-existent TrackId
+    session.play_track(TrackId::new("non_existent"));
+
+    // Ensure no playback was started and state remains stopped
+    let timeout_result = event_rx.recv_timeout(Duration::from_millis(300));
+    if let Ok(SessionEvent::StateChanged(state)) = timeout_result {
+        assert_ne!(
+            state.playback.status,
+            PlaybackStatus::Playing,
+            "Unknown track ID should not trigger playback"
+        );
+    }
+    assert_eq!(
+        session.state().playback.status,
+        PlaybackStatus::Stopped,
+        "Playback status should remain stopped when track is not in queue"
+    );
+}

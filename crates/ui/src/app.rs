@@ -210,7 +210,24 @@ impl SpotyApp {
     }
 
     fn play_track(&mut self, track: Track) {
-        self.session.play_track(track.id);
+        let state = self.session.state();
+        let in_queue = state
+            .current_track
+            .as_ref()
+            .map(|t| t.id == track.id)
+            .unwrap_or(false)
+            || state.upcoming_tracks.iter().any(|t| t.id == track.id);
+
+        if in_queue {
+            self.session.play_track(track.id);
+        } else {
+            let tracks = self.catalog.library().tracks;
+            if let Some(pos) = tracks.iter().position(|t| t.id == track.id) {
+                self.session.play_all(tracks, pos);
+            } else {
+                self.session.play_all(vec![track], 0);
+            }
+        }
     }
 
     fn play_next(&mut self) {
@@ -275,6 +292,9 @@ impl SpotyApp {
     }
 
     fn switch_provider(&mut self, provider: Arc<dyn MusicProvider>, p_type: ProviderType) {
+        self.session.pause();
+        self.session.set_queue(Vec::new(), None);
+
         self.provider = Arc::clone(&provider);
         self.config.active_provider = p_type;
         let _ = self.config.save();
@@ -288,14 +308,18 @@ impl SpotyApp {
 
         let catalog = Arc::clone(&self.catalog);
         let prov = Arc::clone(&provider);
+        let session = self.session.clone();
         self.tokio_rt.spawn(async move {
-            if let Err(e) = catalog.sync_provider(prov.as_ref()).await {
-                tracing::error!("Failed to sync provider: {e}");
+            match catalog.sync_provider(prov.as_ref()).await {
+                Ok(()) => {
+                    let tracks = catalog.library().tracks;
+                    session.set_queue(tracks, None);
+                }
+                Err(e) => {
+                    tracing::error!("Failed to sync provider: {e}");
+                }
             }
         });
-
-        let tracks = self.catalog.library().tracks;
-        self.session.set_queue(tracks, None);
     }
 
     fn switch_to_local_fs(&mut self, path: String) {

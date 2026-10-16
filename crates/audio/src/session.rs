@@ -300,8 +300,13 @@ impl SessionCoordinator {
             SessionCommand::PlayTrack(track_id) => {
                 if let Some(pos) = self.queue.tracks().iter().position(|t| t.id == track_id) {
                     self.queue.jump_to(pos);
+                    self.load_and_play_current(Duration::ZERO);
+                } else {
+                    tracing::warn!(
+                        "PlayTrack ignored: track {} not found in session queue",
+                        track_id
+                    );
                 }
-                self.load_and_play_current(Duration::ZERO);
             }
             SessionCommand::PlayAll {
                 tracks,

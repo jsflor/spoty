@@ -7,6 +7,7 @@ pub mod provider;
 pub mod spotify;
 pub mod subsonic;
 
+pub use async_trait::async_trait;
 pub use catalog::Catalog;
 pub use db::LibraryDatabase;
 pub use demo::DemoProvider;
